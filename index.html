@@ -1,0 +1,23 @@
+insert into timetable (school_id, class, day, period, subject, start_time, end_time)
+select id, 'Form 1', d, p, s, t::time, (t::time + interval '40 minutes')
+from schools,
+(values ('Monday',1,'Mathematics','08:00'),
+        ('Monday',2,'English','08:40'),
+        ('Tuesday',1,'Biology','08:00'),
+        ('Tuesday',2,'History','08:40')) v(d,p,s,t)
+where name='Test School A';
+
+insert into attendance (school_id, student_id, date, status)
+select school_id, id, current_date - n, case when n=2 then 'Absent' else 'Present' end
+from students, generate_series(1,5) n
+where admission_no='1001';
+
+insert into grades (school_id, student_id, subject, term, score, grade)
+select school_id, id, s, 'Term 1', sc, g
+from students,
+(values ('Mathematics',82,'A'),('English',74,'B'),('Biology',68,'B')) v(s,sc,g)
+where admission_no='1001';
+
+insert into announcements (school_id, title, body)
+select id, 'Welcome back', 'Term 2 begins Monday at 8:00 AM.'
+from schools where name='Test School A';
