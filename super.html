@@ -1,0 +1,156 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<title>Super Admin</title>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.0/dist/umd/supabase.min.js"></script>
+<style>
+  :root{--bg:#fafafa;--card:#fff;--ink:#111;--mute:#888;--line:#eee;--accent:#4f46e5;--red:#e11d48}
+  @media(prefers-color-scheme:dark){
+    :root{--bg:#0e0e10;--card:#17171a;--ink:#f2f2f2;--mute:#8a8a90;--line:#26262b;--accent:#818cf8}}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.5 system-ui,sans-serif}
+  main{max-width:520px;margin:0 auto;padding:48px 20px}
+  h1{font-size:22px;font-weight:600;margin:0 0 28px;animation:fade .6s ease both}
+  h1::after{content:"";display:block;width:28px;height:3px;margin-top:10px;background:var(--accent);border-radius:2px}
+  @keyframes fade{from{opacity:0;transform:translateY(12px)}to{opacity:1;transform:none}}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:20px;
+    margin-bottom:14px;animation:fade .5s ease both}
+  h2{font-size:12px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:var(--mute);margin:0 0 12px}
+  input,select{width:100%;padding:13px;margin-bottom:10px;font:inherit;color:var(--ink);
+    background:var(--bg);border:1px solid var(--line);border-radius:12px;transition:.2s}
+  input:focus,select:focus{outline:0;border-color:var(--accent);
+    box-shadow:0 0 0 4px color-mix(in srgb,var(--accent) 18%,transparent)}
+  button{width:100%;padding:13px;font:inherit;font-weight:600;color:#fff;border:0;
+    border-radius:12px;background:var(--accent);cursor:pointer;transition:transform .15s}
+  button:active{transform:scale(.97)}
+  button.ghost{background:none;color:var(--mute);width:auto;padding:0;margin:0 0 20px;font-weight:500}
+  button.del{background:none;color:var(--red);width:auto;padding:4px 0 4px 12px;font-weight:500}
+  .item{display:flex;justify-content:space-between;align-items:center;padding:10px 0;border-top:1px solid var(--line)}
+  .item:first-of-type{border:0}
+  .item small{display:block;color:var(--mute)}
+  .msg{margin:10px 0 0;font-size:14px;min-height:20px}
+  .ok{color:#059669;font-weight:600}.bad{color:var(--red)}
+  .hidden{display:none}
+  .empty{color:var(--mute);margin:0}
+</style>
+</head>
+<body>
+<main>
+  <h1>Super Admin</h1>
+
+  <div id="login" class="card">
+    <input id="em" type="email" placeholder="Email">
+    <input id="pw" type="password" placeholder="Password">
+    <button onclick="signIn()">Sign in</button>
+    <p id="lerr" class="msg bad"></p>
+  </div>
+
+  <div id="app" class="hidden">
+    <button class="ghost" onclick="signOut()">← Sign out</button>
+
+    <div class="card">
+      <h2>Add school</h2>
+      <input id="sname" placeholder="School name">
+      <button onclick="addSchool()">Add</button>
+      <p id="m1" class="msg"></p>
+    </div>
+
+    <div class="card"><h2>Schools</h2><div id="schools"></div><p id="m2" class="msg"></p></div>
+
+    <div class="card">
+      <h2>Link staff to school</h2>
+      <input id="semail" type="email" placeholder="Staff email (created in Supabase)">
+      <select id="sschool"></select>
+      <button onclick="linkStaff()">Link</button>
+      <p id="m3" class="msg"></p>
+    </div>
+
+    <div class="card"><h2>Staff</h2><div id="staff"></div><p id="m4" class="msg"></p></div>
+  </div>
+</main>
+
+<script>
+const db = supabase.createClient("https://nakgbeitslaffmncbjzp.supabase.co",
+  "sb_publishable_9WG3KGWiNqpvPWKygyiQ4g_GIDTKZup");
+const $ = id => document.getElementById(id);
+const esc = v => { const d=document.createElement('div'); d.textContent=v??''; return d.innerHTML; };
+let schools = [];
+
+function say(id, text, ok){ const m=$(id); m.className="msg "+(ok?"ok":"bad"); m.textContent=text; }
+
+async function refresh(){
+  const a = await db.rpc("sa_list_schools");
+  if(a.error){ say("m2", a.error.message); return; }
+  schools = a.data || [];
+  $("schools").innerHTML = schools.length ? schools.map((s,i)=>
+    `<div class="item"><div>${esc(s.name)}<small>${s.pupils} pupils</small></div>
+     <button class="del" onclick="delSchool(${i})">Delete</button></div>`).join("")
+    : '<p class="empty">No schools yet.</p>';
+  $("sschool").innerHTML = schools.map(s=>`<option value="${esc(s.id)}">${esc(s.name)}</option>`).join("");
+
+  const b = await db.rpc("sa_list_staff");
+  if(b.error){ say("m4", b.error.message); return; }
+  const st = b.data || [];
+  $("staff").innerHTML = st.length ? st.map(x=>
+    `<div class="item"><div>${esc(x.email)}<small>${esc(x.school_name)}</small></div>
+     <button class="del" onclick="rmStaff('${esc(x.user_id)}')">Remove</button></div>`).join("")
+    : '<p class="empty">No staff yet.</p>';
+}
+
+async function addSchool(){
+  const n = $("sname").value.trim();
+  if(!n){ say("m1","Enter a name."); return; }
+  const {error} = await db.rpc("sa_add_school",{p_name:n});
+  if(error){ say("m1",error.message); return; }
+  $("sname").value=""; say("m1","Added",true); refresh();
+}
+
+async function delSchool(i){
+  const s = schools[i];
+  const t = prompt(`This permanently deletes "${s.name}" and ALL its pupils, grades, attendance and staff links.\n\nType the school name to confirm:`);
+  if(t === null) return;
+  if(t.trim() !== s.name){ say("m2","Name didn't match. Nothing deleted."); return; }
+  const {error} = await db.rpc("sa_delete_school",{p_id:s.id});
+  if(error){ say("m2",error.message); return; }
+  say("m2","Deleted",true); refresh();
+}
+
+async function linkStaff(){
+  const e = $("semail").value.trim();
+  if(!e){ say("m3","Enter an email."); return; }
+  const {error} = await db.rpc("sa_link_staff",{p_email:e,p_school:$("sschool").value});
+  if(error){ say("m3",error.message); return; }
+  $("semail").value=""; say("m3","Linked",true); refresh();
+}
+
+async function rmStaff(id){
+  if(!confirm("Remove this staff member's access?")) return;
+  const {error} = await db.rpc("sa_remove_staff",{p_user:id});
+  if(error){ say("m4",error.message); return; }
+  say("m4","Removed",true); refresh();
+}
+
+async function signIn(){
+  $("lerr").textContent="";
+  const {error}=await db.auth.signInWithPassword({email:$("em").value.trim(),password:$("pw").value});
+  if(error){ $("lerr").textContent="Invalid login."; return; }
+  gate();
+}
+async function gate(){
+  const {data}=await db.rpc("is_super");
+  if(!data){ await db.auth.signOut(); $("lerr").textContent="Not a super admin."; show(false); return; }
+  show(true); refresh();
+}
+async function signOut(){ await db.auth.signOut(); show(false); }
+function show(on){
+  $("login").classList.toggle("hidden",on);
+  $("app").classList.toggle("hidden",!on);
+  if(!on) $("pw").value="";
+}
+db.auth.getSession().then(({data})=>{ if(data.session) gate(); });
+</script>
+</body>
+</html>
