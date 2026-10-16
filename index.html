@@ -1,23 +1,151 @@
-insert into timetable (school_id, class, day, period, subject, start_time, end_time)
-select id, 'Form 1', d, p, s, t::time, (t::time + interval '40 minutes')
-from schools,
-(values ('Monday',1,'Mathematics','08:00'),
-        ('Monday',2,'English','08:40'),
-        ('Tuesday',1,'Biology','08:00'),
-        ('Tuesday',2,'History','08:40')) v(d,p,s,t)
-where name='Test School A';
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>School Portal</title>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.0/dist/umd/supabase.min.js"></script>
+<style>
+  :root{--bg:#fafafa;--card:#fff;--ink:#111;--mute:#888;--line:#eee;--accent:#4f46e5}
+  @media(prefers-color-scheme:dark){
+    :root{--bg:#0e0e10;--card:#17171a;--ink:#f2f2f2;--mute:#8a8a90;--line:#26262b;--accent:#818cf8}
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);
+    font:15px/1.5 system-ui,sans-serif;-webkit-font-smoothing:antialiased}
+  main{max-width:520px;margin:0 auto;padding:48px 20px}
+  h1{font-size:22px;font-weight:600;margin:0 0 28px;letter-spacing:-.02em;
+    animation:fade .6s ease both}
+  h1::after{content:"";display:block;width:28px;height:3px;margin-top:10px;
+    background:var(--accent);border-radius:2px;animation:grow .8s ease both}
+  @keyframes fade{from{opacity:0;transform:translateY(12px)}to{opacity:1;transform:none}}
+  @keyframes grow{from{width:0}to{width:28px}}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:16px;
+    padding:20px;margin-bottom:14px;animation:fade .6s ease both}
+  .card:nth-of-type(1){animation-delay:.05s}
+  .card:nth-of-type(2){animation-delay:.12s}
+  .card:nth-of-type(3){animation-delay:.19s}
+  .card:nth-of-type(4){animation-delay:.26s}
+  .card:nth-of-type(5){animation-delay:.33s}
+  h2{font-size:12px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;
+    color:var(--mute);margin:0 0 12px}
+  input,select{width:100%;padding:14px;margin-bottom:10px;font:inherit;color:var(--ink);
+    background:var(--bg);border:1px solid var(--line);border-radius:12px;
+    transition:border-color .2s,box-shadow .2s;-webkit-appearance:none;appearance:none}
+  input:focus,select:focus{outline:0;border-color:var(--accent);
+    box-shadow:0 0 0 4px color-mix(in srgb,var(--accent) 18%,transparent)}
+  button{width:100%;padding:14px;font:inherit;font-weight:600;color:#fff;border:0;
+    border-radius:12px;background:var(--accent);cursor:pointer;
+    transition:transform .15s,opacity .2s}
+  button:active{transform:scale(.97)}
+  button:disabled{opacity:.6}
+  button.ghost{background:none;color:var(--mute);width:auto;padding:0;margin:0 0 20px;font-weight:500}
+  #err{color:#e11d48;min-height:20px;margin:10px 0 0;font-size:14px}
+  .hidden{display:none}
+  .scroll{overflow-x:auto}
+  table{width:100%;border-collapse:collapse}
+  th{text-align:left;font-weight:500;color:var(--mute);font-size:12px;padding:6px 8px 6px 0}
+  td{padding:10px 8px 10px 0;border-top:1px solid var(--line);white-space:nowrap}
+  .row{display:flex;justify-content:space-between;padding:9px 0;border-top:1px solid var(--line)}
+  .row:first-of-type{border:0}
+  .row span:first-child{color:var(--mute)}
+  .dot{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:8px}
+  .p{background:#10b981}.a{background:#f43f5e}.l{background:#f59e0b}
+  .ann{padding:10px 0;border-top:1px solid var(--line)}
+  .ann:first-of-type{border:0}
+  .ann b{display:block}
+  .ann span{color:var(--mute)}
+  .empty{color:var(--mute);margin:0}
+  .spin{display:inline-block;width:16px;height:16px;border:2px solid #fff;
+    border-top-color:transparent;border-radius:50%;animation:s .7s linear infinite;vertical-align:middle}
+  @keyframes s{to{transform:rotate(360deg)}}
+</style>
+</head>
+<body>
+<main>
+  <h1>School Portal</h1>
 
-insert into attendance (school_id, student_id, date, status)
-select school_id, id, current_date - n, case when n=2 then 'Absent' else 'Present' end
-from students, generate_series(1,5) n
-where admission_no='1001';
+  <div id="login" class="card">
+    <select id="school"></select>
+    <input id="adm" placeholder="Admission number" autocomplete="off">
+    <input id="code" type="password" placeholder="Access code">
+    <button id="btn" onclick="doLogin()">Continue</button>
+    <p id="err"></p>
+  </div>
 
-insert into grades (school_id, student_id, subject, term, score, grade)
-select school_id, id, s, 'Term 1', sc, g
-from students,
-(values ('Mathematics',82,'A'),('English',74,'B'),('Biology',68,'B')) v(s,sc,g)
-where admission_no='1001';
+  <div id="results" class="hidden">
+    <button class="ghost" onclick="logout()">← Log out</button>
+    <div class="card"><h2>Details</h2><div id="details"></div></div>
+    <div class="card"><h2>Timetable</h2><div id="timetable" class="scroll"></div></div>
+    <div class="card"><h2>Attendance</h2><div id="attendance" class="scroll"></div></div>
+    <div class="card"><h2>Grades</h2><div id="grades" class="scroll"></div></div>
+    <div class="card"><h2>Announcements</h2><div id="announcements"></div></div>
+  </div>
+</main>
 
-insert into announcements (school_id, title, body)
-select id, 'Welcome back', 'Term 2 begins Monday at 8:00 AM.'
-from schools where name='Test School A';
+<script>
+const SUPABASE_URL = "https://nakgbeitslaffmncbjzp.supabase.co";
+const SUPABASE_KEY = "sb_publishable_9WG3KGWiNqpvPWKygyiQ4g_GIDTKZup";
+const db = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+const $ = id => document.getElementById(id);
+
+const esc = v => { const d=document.createElement('div'); d.textContent=v??''; return d.innerHTML; };
+const empty = '<p class="empty">—</p>';
+
+function cell(c,v){
+  if(c==="status"){
+    const k=String(v||"").toLowerCase();
+    const cls=k.startsWith("p")?"p":k.startsWith("l")?"l":"a";
+    return `<span class="dot ${cls}"></span>${esc(v)}`;
+  }
+  if(c==="start_time"||c==="end_time") return esc(String(v||"").slice(0,5));
+  return esc(v);
+}
+
+function table(rows, cols){
+  if(!rows.length) return empty;
+  return "<table><tr>"+cols.map(c=>"<th>"+esc(c.replace('_',' '))+"</th>").join("")+"</tr>"+
+    rows.map(r=>"<tr>"+cols.map(c=>"<td>"+cell(c,r[c])+"</td>").join("")+"</tr>").join("")+"</table>";
+}
+
+async function loadSchools(){
+  const {data,error} = await db.rpc("list_schools");
+  if(error){ $("err").textContent=error.message; return; }
+  $("school").innerHTML = (data||[]).map(s=>`<option value="${esc(s.id)}">${esc(s.name)}</option>`).join("");
+}
+
+async function doLogin(){
+  $("err").textContent = "";
+  const btn=$("btn"); btn.innerHTML='<span class="spin"></span>'; btn.disabled=true;
+  const {data,error} = await db.rpc("lookup_student",{
+    p_school:$("school").value, p_adm:$("adm").value.trim(), p_code:$("code").value
+  });
+  btn.textContent="Continue"; btn.disabled=false;
+  if(error){ $("err").textContent=error.message; return; }
+  if(!data){ $("err").textContent="Invalid details."; return; }
+
+  const s = data.student;
+  $("details").innerHTML = [["Name",s.name],["Admission",s.admission_no],["Class",s.class],
+    ["Born",s.dob],["Guardian",s.guardian]]
+    .map(([k,v])=>`<div class="row"><span>${k}</span><span>${esc(v||"—")}</span></div>`).join("");
+  $("timetable").innerHTML = table(data.timetable,["day","period","subject","start_time","end_time"]);
+  $("attendance").innerHTML = table(data.attendance,["date","status"]);
+  $("grades").innerHTML = table(data.grades,["subject","term","score","grade"]);
+  $("announcements").innerHTML = data.announcements.length
+    ? data.announcements.map(a=>`<div class="ann"><b>${esc(a.title)}</b><span>${esc(a.body)}</span></div>`).join("")
+    : empty;
+
+  $("login").classList.add("hidden");
+  $("results").classList.remove("hidden");
+  window.scrollTo({top:0,behavior:"smooth"});
+}
+
+function logout(){
+  $("results").classList.add("hidden");
+  $("login").classList.remove("hidden");
+  $("code").value=""; $("adm").value="";
+}
+loadSchools();
+</script>
+</body>
+</html>
