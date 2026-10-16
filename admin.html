@@ -1,0 +1,110 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<title>Staff</title>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.0/dist/umd/supabase.min.js"></script>
+<style>
+  :root{--bg:#fafafa;--card:#fff;--ink:#111;--mute:#888;--line:#eee;--accent:#4f46e5}
+  @media(prefers-color-scheme:dark){
+    :root{--bg:#0e0e10;--card:#17171a;--ink:#f2f2f2;--mute:#8a8a90;--line:#26262b;--accent:#818cf8}}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.5 system-ui,sans-serif}
+  main{max-width:520px;margin:0 auto;padding:48px 20px}
+  h1{font-size:22px;font-weight:600;margin:0 0 28px;animation:fade .6s ease both}
+  h1::after{content:"";display:block;width:28px;height:3px;margin-top:10px;background:var(--accent);border-radius:2px}
+  @keyframes fade{from{opacity:0;transform:translateY(12px)}to{opacity:1;transform:none}}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:20px;
+    margin-bottom:14px;animation:fade .5s ease both}
+  h2{font-size:12px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:var(--mute);margin:0 0 12px}
+  input,select{width:100%;padding:13px;margin-bottom:10px;font:inherit;color:var(--ink);
+    background:var(--bg);border:1px solid var(--line);border-radius:12px;transition:.2s}
+  input:focus,select:focus{outline:0;border-color:var(--accent);
+    box-shadow:0 0 0 4px color-mix(in srgb,var(--accent) 18%,transparent)}
+  button{width:100%;padding:13px;font:inherit;font-weight:600;color:#fff;border:0;
+    border-radius:12px;background:var(--accent);cursor:pointer;transition:transform .15s}
+  button:active{transform:scale(.97)}
+  button.ghost{background:none;color:var(--mute);width:auto;padding:0;margin:0 0 20px;font-weight:500}
+  .msg{margin:10px 0 0;font-size:14px;min-height:20px}
+  .ok{color:#059669;font-weight:600}.bad{color:#e11d48}
+  .hidden{display:none}
+</style>
+</head>
+<body>
+<main>
+  <h1>Staff</h1>
+
+  <div id="login" class="card">
+    <input id="em" type="email" placeholder="Email">
+    <input id="pw" type="password" placeholder="Password">
+    <button onclick="signIn()">Sign in</button>
+    <p id="lerr" class="msg bad"></p>
+  </div>
+
+  <div id="app" class="hidden">
+    <button class="ghost" onclick="signOut()">← Sign out</button>
+    <div id="forms"></div>
+  </div>
+</main>
+
+<script>
+const db = supabase.createClient("https://nakgbeitslaffmncbjzp.supabase.co",
+  "sb_publishable_9WG3KGWiNqpvPWKygyiQ4g_GIDTKZup");
+const $ = id => document.getElementById(id);
+const rpc = (fn, a) => db.rpc(fn, a);
+
+const forms = [
+ {t:"Add student", f:[["adm","Admission no"],["name","Full name"],["cls","Class"],["dob","Date of birth","date"],["gu","Guardian"]],
+  go:v=>rpc("add_student",{p_adm:v.adm,p_name:v.name,p_class:v.cls,p_dob:v.dob||null,p_guardian:v.gu}),
+  ok:d=>"Access code: "+d+" — save it now, it can't be shown again"},
+ {t:"Reset access code", f:[["adm","Admission no"]],
+  go:v=>rpc("reset_code",{p_adm:v.adm}), ok:d=>"New code: "+d},
+ {t:"Attendance", f:[["adm","Admission no"],["d","Date","date"],["s","Status","select",["Present","Absent","Late"]]],
+  go:v=>rpc("add_attendance",{p_adm:v.adm,p_date:v.d,p_status:v.s}), ok:()=>"Saved"},
+ {t:"Grade", f:[["adm","Admission no"],["sub","Subject"],["term","Term"],["sc","Score","number"],["g","Grade"]],
+  go:v=>rpc("add_grade",{p_adm:v.adm,p_subject:v.sub,p_term:v.term,p_score:v.sc,p_grade:v.g}), ok:()=>"Saved"},
+ {t:"Timetable", f:[["c","Class"],["d","Day","select",["Monday","Tuesday","Wednesday","Thursday","Friday"]],
+   ["p","Period","number"],["s","Subject"],["st","Start","time"],["en","End","time"]],
+  go:v=>db.from("timetable").insert({class:v.c,day:v.d,period:v.p,subject:v.s,start_time:v.st,end_time:v.en}),
+  ok:()=>"Saved"},
+ {t:"Announcement", f:[["ti","Title"],["b","Message"]],
+  go:v=>db.from("announcements").insert({title:v.ti,body:v.b}), ok:()=>"Posted"}
+];
+
+function build(){
+  $("forms").innerHTML = forms.map((fm,i)=>`<div class="card" style="animation-delay:${i*.06}s">
+    <h2>${fm.t}</h2>`+fm.f.map(([id,l,ty,opt])=>
+      ty==="select"
+        ? `<select id="f${i}_${id}">${opt.map(o=>`<option>${o}</option>`).join("")}</select>`
+        : `<input id="f${i}_${id}" type="${ty||"text"}" placeholder="${l}" ${ty==="date"||ty==="time"?`title="${l}"`:""}>`
+    ).join("")+`<button onclick="run(${i})">Save</button><p class="msg" id="m${i}"></p></div>`).join("");
+}
+
+async function run(i){
+  const fm=forms[i], m=$("m"+i), v={};
+  fm.f.forEach(([id])=>v[id]=$(`f${i}_${id}`).value.trim());
+  m.className="msg"; m.textContent="…";
+  const {data,error}=await fm.go(v);
+  if(error){ m.className="msg bad"; m.textContent=error.message; return; }
+  m.className="msg ok"; m.textContent=fm.ok(data);
+  fm.f.forEach(([id,,ty])=>{ if(ty!=="select") $(`f${i}_${id}`).value=""; });
+}
+
+async function signIn(){
+  $("lerr").textContent="";
+  const {error}=await db.auth.signInWithPassword({email:$("em").value.trim(),password:$("pw").value});
+  if(error){ $("lerr").textContent="Invalid login."; return; }
+  show(true);
+}
+async function signOut(){ await db.auth.signOut(); show(false); }
+function show(on){
+  $("login").classList.toggle("hidden",on);
+  $("app").classList.toggle("hidden",!on);
+  if(on) build(); else $("pw").value="";
+}
+db.auth.getSession().then(({data})=>show(!!data.session));
+</script>
+</body>
+</html>
