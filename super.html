@@ -155,7 +155,7 @@ async function signIn(){
 }
 async function gate(){
   const {data}=await db.rpc("is_super");
-  if(!data){ await db.auth.signOut(); $("lerr").textContent="Not a super admin."; show(false); return; }
+  if(!data){ await db.auth.signOut(); $("lerr").textContent="Invalid login."; show(false); return; }
   show(true); refresh();
 }
 async function signOut(){ await db.auth.signOut(); show(false); }
