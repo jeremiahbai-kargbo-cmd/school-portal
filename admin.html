@@ -51,6 +51,7 @@
     <button class="ghost" onclick="signOut()">← Sign out</button>
     <div id="mgr"></div>
     <div id="forms"></div>
+    <div id="stv"></div>
     <div id="ttv"></div>
   </div>
 </main>
@@ -70,7 +71,7 @@ const cls=()=>lists.classes.map(x=>x.name), sub=()=>lists.subjects.map(x=>x.name
 const forms = [
  {t:"Add student", f:[["adm","Admission no"],["name","Full name"],["cls","Class","select",cls],["dob","Date of birth","date"],["gu","Guardian"]],
   go:v=>rpc("add_student",{p_adm:v.adm,p_name:v.name,p_class:v.cls,p_dob:v.dob||null,p_guardian:v.gu}),
-  ok:d=>"Access code: "+d+" — save it now, it can't be shown again"},
+  ok:d=>"Access code: "+d+" — save it now, it can't be shown again", after:()=>loadStudents()},
  {t:"Reset access code", f:[["adm","Admission no"]],
   go:v=>rpc("reset_code",{p_adm:v.adm}), ok:d=>"New code: "+d},
  {t:"Attendance", f:[["adm","Admission no"],["d","Date","date"],["s","Status","select",["Present","Absent","Late"]]],
@@ -101,6 +102,10 @@ function build(){
         : `<input id="f${i}_${id}" type="${ty||"text"}" placeholder="${l}" ${ty==="date"||ty==="time"?`title="${l}"`:""}>`
     ).join("")+`<button onclick="run(${i})">Save</button><p class="msg" id="m${i}"></p></div>`).join("");
 
+  $("stv").innerHTML=`<div class="card"><h2>Students <span id="scount"></span></h2>
+    <input id="sq" placeholder="Search name or admission no" oninput="renderStudents()">
+    <select id="sc" onchange="renderStudents()"></select><div id="sl"></div><p class="msg" id="ms"></p></div>`;
+
   $("ttv").innerHTML=`<div class="card"><h2>School timetable</h2>
     <select id="ttc" onchange="loadTT()"></select><div id="ttl"></div><p class="msg" id="mtt"></p></div>`;
 }
@@ -115,6 +120,23 @@ function fillSelects(){
   const tc=$("ttc"), k=tc.value;
   tc.innerHTML='<option value="">All classes</option>'+cls().map(c=>`<option value="${esc(c)}">${esc(c)}</option>`).join("");
   if(k) tc.value=k;
+  const sc=$("sc"), k2=sc.value;
+  sc.innerHTML='<option value="">All classes</option>'+cls().map(c=>`<option value="${esc(c)}">${esc(c)}</option>`).join("");
+  if(k2) sc.value=k2;
+}
+
+let students=[];
+async function loadStudents(){
+  const {data,error}=await db.rpc("list_my_students");
+  if(error){ say($("ms"),error.message); return; }
+  students=(data||[]).sort((a,b)=>String(a.class).localeCompare(String(b.class),undefined,{numeric:true})||String(a.name).localeCompare(b.name));
+  renderStudents();
+}
+function renderStudents(){
+  const q=$("sq").value.trim().toLowerCase(), c=$("sc").value;
+  const r=students.filter(s=>(!c||s.class===c)&&(!q||String(s.name).toLowerCase().includes(q)||String(s.admission_no).toLowerCase().includes(q)));
+  $("scount").textContent="("+r.length+")";
+  $("sl").innerHTML=r.length?r.map(s=>`<div class="item"><div>${esc(s.name)}<small>${esc(s.admission_no)} · ${esc(s.class)}${s.guardian?" · "+esc(s.guardian):""}</small></div></div>`).join(""):'<p class="empty">No students found.</p>';
 }
 
 async function load(){
@@ -190,7 +212,7 @@ async function signOut(){ await db.auth.signOut(); show(false); }
 function show(on){
   $("login").classList.toggle("hidden",on);
   $("app").classList.toggle("hidden",!on);
-  if(on){ build(); load(); loadTT(); } else $("pw").value="";
+  if(on){ build(); load(); loadTT(); loadStudents(); } else $("pw").value="";
 }
 show(false);
 </script>
