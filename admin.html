@@ -28,6 +28,8 @@
   button:active{transform:scale(.97)}
   button.ghost{background:none;color:var(--mute);width:auto;padding:0;margin:0 0 20px;font-weight:500}
   button.del{background:none;color:var(--red);width:auto;padding:4px 0 4px 12px;font-weight:500}
+  button.sm{background:none;color:var(--accent);width:auto;padding:4px 0 4px 12px;font-weight:500}
+  .acts{display:flex;white-space:nowrap}
   .item{display:flex;justify-content:space-between;align-items:center;padding:9px 0;border-top:1px solid var(--line)}
   .item small{display:block;color:var(--mute)}
   .empty{color:var(--mute);margin:0}
@@ -104,7 +106,15 @@ function build(){
 
   $("stv").innerHTML=`<div class="card"><h2>Students <span id="scount"></span></h2>
     <input id="sq" placeholder="Search name or admission no" oninput="renderStudents()">
-    <select id="sc" onchange="renderStudents()"></select><div id="sl"></div><p class="msg" id="ms"></p></div>`;
+    <select id="sc" onchange="renderStudents()"></select>
+    <div id="se" class="hidden" style="border-top:1px solid var(--line);padding-top:14px;margin-bottom:14px">
+      <h2>Edit student</h2>
+      <input id="se_adm" placeholder="Admission no"><input id="se_name" placeholder="Full name">
+      <select id="se_cls"></select><input id="se_dob" type="date" title="Date of birth">
+      <input id="se_gu" placeholder="Guardian">
+      <button onclick="saveEdit()">Save changes</button>
+      <button class="ghost" style="margin:12px 0 0" onclick="$('se').classList.add('hidden')">Cancel</button>
+    </div><div id="sl"></div><p class="msg" id="ms"></p></div>`;
 
   $("ttv").innerHTML=`<div class="card"><h2>School timetable</h2>
     <select id="ttc" onchange="loadTT()"></select><div id="ttl"></div><p class="msg" id="mtt"></p></div>`;
@@ -125,7 +135,33 @@ function fillSelects(){
   if(k2) sc.value=k2;
 }
 
-let students=[];
+let students=[], editing=null;
+function editStudent(i){
+  const s=students[i]; editing=s;
+  const names=cls(); if(s.class&&!names.includes(s.class)) names.unshift(s.class);
+  $("se_cls").innerHTML=names.map(c=>`<option value="${esc(c)}">${esc(c)}</option>`).join("");
+  $("se_cls").value=s.class||"";
+  $("se_adm").value=s.admission_no||""; $("se_name").value=s.name||"";
+  $("se_dob").value=s.dob||""; $("se_gu").value=s.guardian||"";
+  $("se").classList.remove("hidden"); $("se").scrollIntoView({behavior:"smooth",block:"center"});
+}
+async function saveEdit(){
+  const m=$("ms"), s=editing; if(!s) return;
+  if(!$("se_name").value.trim()||!$("se_adm").value.trim()){ say(m,"Name and admission no are required."); return; }
+  const {error}=await rpc("update_student",{p_school:s.school_id,p_adm:s.admission_no,p_new_adm:$("se_adm").value.trim(),
+    p_name:$("se_name").value.trim(),p_class:$("se_cls").value,p_dob:$("se_dob").value||null,p_guardian:$("se_gu").value.trim()});
+  if(error){ say(m,error.code==="23505"?"That admission number is already in use at this school.":error.message); return; }
+  $("se").classList.add("hidden"); say(m,"Student updated",true); loadStudents();
+}
+async function delStudent(i){
+  const s=students[i];
+  const a=prompt(`This permanently deletes ${s.name} and all their records (attendance, grades, access).\n\nType the admission number to confirm:`);
+  if(a===null) return;
+  if(a.trim()!==String(s.admission_no)){ say($("ms"),"Admission number didn't match. Nothing deleted."); return; }
+  const {error}=await rpc("delete_student",{p_school:s.school_id,p_adm:s.admission_no});
+  if(error){ say($("ms"),error.message); return; }
+  say($("ms"),"Student deleted",true); loadStudents();
+}
 async function loadStudents(){
   const {data,error}=await db.rpc("list_my_students");
   if(error){ say($("ms"),error.message); return; }
@@ -136,7 +172,8 @@ function renderStudents(){
   const q=$("sq").value.trim().toLowerCase(), c=$("sc").value;
   const r=students.filter(s=>(!c||s.class===c)&&(!q||String(s.name).toLowerCase().includes(q)||String(s.admission_no).toLowerCase().includes(q)));
   $("scount").textContent="("+r.length+")";
-  $("sl").innerHTML=r.length?r.map(s=>`<div class="item"><div>${esc(s.name)}<small>${esc(s.admission_no)} · ${esc(s.class)}${s.guardian?" · "+esc(s.guardian):""}</small></div></div>`).join(""):'<p class="empty">No students found.</p>';
+  $("sl").innerHTML=r.length?r.map(s=>{const i=students.indexOf(s);return `<div class="item"><div>${esc(s.name)}<small>${esc(s.admission_no)} · ${esc(s.class)}${s.guardian?" · "+esc(s.guardian):""}</small></div>
+    <div class="acts"><button class="sm" onclick="editStudent(${i})">Edit</button><button class="del" onclick="delStudent(${i})">Delete</button></div></div>`}).join(""):'<p class="empty">No students found.</p>';
 }
 
 async function load(){
