@@ -55,6 +55,7 @@
   .ann:first-of-type{border:0}
   .ann b{display:block}
   .ann span{color:var(--mute)}
+  .ann small{display:block;color:var(--mute);font-size:12px;margin-top:2px}
   .empty{color:var(--mute);margin:0}
   .spin{display:inline-block;width:16px;height:16px;border:2px solid #fff;
     border-top-color:transparent;border-radius:50%;animation:s .7s linear infinite;vertical-align:middle}
@@ -91,6 +92,7 @@ const $ = id => document.getElementById(id);
 
 const esc = v => { const d=document.createElement('div'); d.textContent=v??''; return d.innerHTML; };
 const empty = '<p class="empty">—</p>';
+const DAYS = ["Monday","Tuesday","Wednesday","Thursday","Friday","Saturday","Sunday"];
 
 function cell(c,v){
   if(c==="status"){
@@ -108,6 +110,15 @@ function table(rows, cols){
     rows.map(r=>"<tr>"+cols.map(c=>"<td>"+cell(c,r[c])+"</td>").join("")+"</tr>").join("")+"</table>";
 }
 
+function byDayPeriod(a,b){
+  return (DAYS.indexOf(a.day)-DAYS.indexOf(b.day)) || (Number(a.period)-Number(b.period));
+}
+
+function fmtDate(v){
+  const d = new Date(v);
+  return isNaN(d) ? "" : d.toLocaleDateString(undefined,{day:"numeric",month:"short",year:"numeric"});
+}
+
 async function loadSchools(){
   const {data,error} = await db.rpc("list_schools");
   if(error){ $("err").textContent=error.message; return; }
@@ -117,7 +128,7 @@ async function loadSchools(){
 async function doLogin(){
   $("err").textContent = "";
   const btn=$("btn"); btn.innerHTML='<span class="spin"></span>'; btn.disabled=true;
-  const {data,error} = await db.rpc("lookup_student",{
+  const {data,error} = await db.rpc("lookup_student_filtered",{
     p_school:$("school").value, p_adm:$("adm").value.trim(), p_code:$("code").value
   });
   btn.textContent="Continue"; btn.disabled=false;
@@ -128,11 +139,12 @@ async function doLogin(){
   $("details").innerHTML = [["Name",s.name],["Admission",s.admission_no],["Class",s.class],
     ["Born",s.dob],["Guardian",s.guardian]]
     .map(([k,v])=>`<div class="row"><span>${k}</span><span>${esc(v||"—")}</span></div>`).join("");
-  $("timetable").innerHTML = table(data.timetable,["day","period","subject","start_time","end_time"]);
-  $("attendance").innerHTML = table(data.attendance,["date","status"]);
-  $("grades").innerHTML = table(data.grades,["subject","term","score","grade"]);
-  $("announcements").innerHTML = data.announcements.length
-    ? data.announcements.map(a=>`<div class="ann"><b>${esc(a.title)}</b><span>${esc(a.body)}</span></div>`).join("")
+  $("timetable").innerHTML = table([...(data.timetable||[])].sort(byDayPeriod),["day","period","subject","start_time","end_time"]);
+  $("attendance").innerHTML = table(data.attendance||[],["date","status"]);
+  $("grades").innerHTML = table(data.grades||[],["subject","term","score","grade"]);
+  const ann = data.announcements||[];
+  $("announcements").innerHTML = ann.length
+    ? ann.map(a=>`<div class="ann"><b>${esc(a.title)}</b><span>${esc(a.body)}</span>${a.created_at?`<small>${esc(fmtDate(a.created_at))}</small>`:""}</div>`).join("")
     : empty;
 
   $("login").classList.add("hidden");
