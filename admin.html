@@ -52,6 +52,8 @@
   <div id="app" class="hidden">
     <button class="ghost" onclick="signOut()">← Sign out</button>
     <div id="mgr"></div>
+    <div id="tch"></div>
+    <div id="cs"></div>
     <div id="forms"></div>
     <div id="stv"></div>
     <div id="ttv"></div>
@@ -67,8 +69,10 @@ const rpc = (fn, a) => db.rpc(fn, a);
 const esc = v => String(v??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 const say = (el,t,ok)=>{ el.className="msg "+(ok?"ok":"bad"); el.textContent=t; };
 const DAYS=["Monday","Tuesday","Wednesday","Thursday","Friday"];
-const lists={classes:[],subjects:[]};
+const lists={classes:[],subjects:[],venues:[]};
+let asg=[], teachers=[];
 const cls=()=>lists.classes.map(x=>x.name), sub=()=>lists.subjects.map(x=>x.name);
+const subFor=c=>asg.filter(a=>a.class===c).map(a=>a.subject);
 
 const forms = [
  {t:"Add student", f:[["adm","Admission no"],["name","Full name"],["cls","Class","select",cls],["dob","Date of birth","date"],["gu","Guardian"]],
@@ -81,8 +85,9 @@ const forms = [
  {t:"Grade", f:[["adm","Admission no"],["sub","Subject","select",sub],["term","Term"],["sc","Score","number"],["g","Grade"]],
   go:v=>rpc("add_grade",{p_adm:v.adm,p_subject:v.sub,p_term:v.term,p_score:v.sc,p_grade:v.g}), ok:()=>"Saved"},
  {t:"Timetable slot", f:[["c","Class","select",cls],["d","Day","select",DAYS],["p","Period","number"],
-   ["s","Subject","select",sub],["st","Start","time"],["en","End","time"]],
-  go:v=>db.from("timetable").insert({class:v.c,day:v.d,period:v.p,subject:v.s,start_time:v.st,end_time:v.en}),
+   ["s","Subject","select",()=>subFor(($("f4_c")||{}).value)],["st","Start","time"],["en","End","time"]],
+  go:v=>{ const a=asg.find(x=>x.class===v.c&&x.subject===v.s)||{};
+    return db.from("timetable").insert({class:v.c,day:v.d,period:v.p,subject:v.s,start_time:v.st,end_time:v.en,teacher:a.teacher||null,venue:a.venue||null}); },
   ok:()=>"Saved", after:()=>loadTT()},
  {t:"Announcement", f:[["ti","Title"],["b","Message"],["c","Send to","select",()=>["",...cls()]],
    ["adm","Or one student (admission no, optional)"]],
@@ -92,7 +97,7 @@ const forms = [
 ];
 
 function build(){
-  $("mgr").innerHTML=[["classes","Classes","Class name, e.g. 3A"],["subjects","Subjects","Subject name"]].map(([t,h,p])=>
+  $("mgr").innerHTML=[["classes","Classes","Class name, e.g. 3A"],["subjects","Subjects","Subject name"],["venues","Venues","Venue name, e.g. Room 4"]].map(([t,h,p])=>
     `<div class="card"><h2>${h}</h2><div id="l_${t}"></div>
      <input id="n_${t}" placeholder="${p}" style="margin-top:12px">
      <button onclick="add('${t}')">Add</button><p class="msg" id="mm_${t}"></p></div>`).join("");
@@ -103,6 +108,15 @@ function build(){
         ? `<select id="f${i}_${id}">${Array.isArray(opt)?opt.map(o=>`<option>${o}</option>`).join(""):""}</select>`
         : `<input id="f${i}_${id}" type="${ty||"text"}" placeholder="${l}" ${ty==="date"||ty==="time"?`title="${l}"`:""}>`
     ).join("")+`<button onclick="run(${i})">Save</button><p class="msg" id="m${i}"></p></div>`).join("");
+
+  $("tch").innerHTML=`<div class="card"><h2>Teachers</h2><div id="tl"></div>
+    <input id="t_name" placeholder="Full name" style="margin-top:12px"><input id="t_phone" placeholder="Phone (optional)">
+    <input id="t_email" type="email" placeholder="Email (optional)"><input id="t_notes" placeholder="Details, e.g. qualification (optional)">
+    <button id="t_btn" onclick="saveTeacher()">Add teacher</button>
+    <button class="ghost hidden" id="t_cancel" style="margin:12px 0 0" onclick="clearTeacher()">Cancel</button><p class="msg" id="mt"></p></div>`;
+  $("cs").innerHTML=`<div class="card"><h2>Class subjects</h2><div id="csl" style="margin-bottom:14px"></div>
+    <select id="a_c"></select><select id="a_s"></select><select id="a_t"></select><select id="a_v"></select>
+    <button onclick="assign()">Assign to class</button><p class="msg" id="mcs"></p></div>`;
 
   $("stv").innerHTML=`<div class="card"><h2>Students <span id="scount"></span></h2>
     <input id="sq" placeholder="Search name or admission no" oninput="renderStudents()">
@@ -118,6 +132,7 @@ function build(){
 
   $("ttv").innerHTML=`<div class="card"><h2>School timetable</h2>
     <select id="ttc" onchange="loadTT()"></select><div id="ttl"></div><p class="msg" id="mtt"></p></div>`;
+  $("f4_c").onchange=fillSelects;
 }
 
 function fillSelects(){
@@ -133,6 +148,79 @@ function fillSelects(){
   const sc=$("sc"), k2=sc.value;
   sc.innerHTML='<option value="">All classes</option>'+cls().map(c=>`<option value="${esc(c)}">${esc(c)}</option>`).join("");
   if(k2) sc.value=k2;
+  const fill=(id,items,blank)=>{ const e=$(id), k=e.value;
+    e.innerHTML=(blank?`<option value="">${blank}</option>`:"")+items.map(([v,l])=>`<option value="${esc(v)}">${esc(l)}</option>`).join("");
+    if(k) e.value=k; };
+  fill("a_c",lists.classes.map(x=>[x.name,x.name]));
+  fill("a_s",lists.subjects.map(x=>[x.name,x.name]));
+  fill("a_t",teachers.map(x=>[x.id,x.full_name]),"No teacher yet");
+  fill("a_v",lists.venues.map(x=>[x.id,x.name]),"No venue yet");
+}
+
+let tEdit=null;
+async function loadTeachers(){
+  const {data,error}=await db.from("teachers").select("id,full_name,phone,email,notes").order("full_name");
+  if(error){ say($("mt"),error.message); return; }
+  teachers=data||[]; renderTeachers(); fillSelects();
+}
+function renderTeachers(){
+  $("tl").innerHTML=teachers.length?teachers.map((x,i)=>{
+    const cl=asg.filter(a=>a.teacher_id===x.id).map(a=>a.class+" "+a.subject).join(", ");
+    return `<div class="item"><div>${esc(x.full_name)}<small>${esc([x.phone,x.email].filter(Boolean).join(" · "))}</small>${x.notes?`<small>${esc(x.notes)}</small>`:""}${cl?`<small>Teaches: ${esc(cl)}</small>`:""}</div>
+    <div class="acts"><button class="sm" onclick="editTeacher(${i})">Edit</button><button class="del" onclick="delTeacher(${i})">Delete</button></div></div>`;
+  }).join(""):'<p class="empty">None yet.</p>';
+}
+async function saveTeacher(){
+  const m=$("mt"), row={full_name:$("t_name").value.trim(),phone:$("t_phone").value.trim()||null,
+    email:$("t_email").value.trim()||null,notes:$("t_notes").value.trim()||null};
+  if(!row.full_name){ say(m,"Enter the teacher's name."); return; }
+  const {error}=tEdit?await db.from("teachers").update(row).eq("id",tEdit):await db.from("teachers").insert(row);
+  if(error){ say(m,error.message); return; }
+  const w=tEdit?"Updated":"Added"; clearTeacher(); say(m,w,true); loadTeachers(); loadAsg();
+}
+function clearTeacher(){
+  tEdit=null; ["t_name","t_phone","t_email","t_notes"].forEach(i=>$(i).value="");
+  $("t_btn").textContent="Add teacher"; $("t_cancel").classList.add("hidden"); $("mt").textContent="";
+}
+function editTeacher(i){
+  const x=teachers[i]; tEdit=x.id;
+  $("t_name").value=x.full_name||""; $("t_phone").value=x.phone||""; $("t_email").value=x.email||""; $("t_notes").value=x.notes||"";
+  $("t_btn").textContent="Save changes"; $("t_cancel").classList.remove("hidden");
+  $("t_name").scrollIntoView({behavior:"smooth",block:"center"});
+}
+async function delTeacher(i){
+  const x=teachers[i];
+  if(!confirm(`Delete ${x.full_name}? Their class assignments stay but will show no teacher.`)) return;
+  const {error}=await db.from("teachers").delete().eq("id",x.id);
+  if(error){ say($("mt"),error.message); return; }
+  loadTeachers(); loadAsg();
+}
+
+async function loadAsg(){
+  const {data,error}=await db.from("class_subjects").select("id,class,subject,teacher_id,teachers(full_name),venues(name)");
+  if(error){ say($("mcs"),error.message); return; }
+  asg=(data||[]).map(a=>({id:a.id,class:a.class,subject:a.subject,teacher_id:a.teacher_id,
+    teacher:a.teachers?a.teachers.full_name:null,venue:a.venues?a.venues.name:null}));
+  renderCS(); renderTeachers(); fillSelects();
+}
+function renderCS(){
+  const g=lists.classes.map(c=>[c.name,asg.filter(a=>a.class===c.name).sort((a,b)=>a.subject.localeCompare(b.subject))]).filter(x=>x[1].length);
+  $("csl").innerHTML=g.length?g.map(([c,r])=>`<h2 style="margin:12px 0 2px">${esc(c)}</h2>`+r.map(a=>
+    `<div class="item"><div>${esc(a.subject)}<small>${esc([a.teacher,a.venue].filter(Boolean).join(" · ")||"No teacher or venue yet")}</small></div>
+     <button class="del" onclick="delAsg('${esc(a.id)}')">Remove</button></div>`).join("")).join("")
+    :'<p class="empty">No subjects assigned to classes yet.</p>';
+}
+async function assign(){
+  const m=$("mcs"), c=$("a_c").value, s=$("a_s").value;
+  if(!c||!s){ say(m,"Choose a class and a subject."); return; }
+  const {error}=await db.from("class_subjects").upsert({class:c,subject:s,teacher_id:$("a_t").value||null,venue_id:$("a_v").value||null},{onConflict:"school_id,class,subject"});
+  if(error){ say(m,error.message); return; }
+  say(m,`${s} assigned to ${c}`,true); loadAsg();
+}
+async function delAsg(id){
+  const {error}=await db.from("class_subjects").delete().eq("id",id);
+  if(error){ say($("mcs"),error.message); return; }
+  loadAsg();
 }
 
 let students=[], editing=null;
@@ -177,7 +265,7 @@ function renderStudents(){
 }
 
 async function load(){
-  for(const t of ["classes","subjects"]){
+  for(const t of ["classes","subjects","venues"]){
     const {data}=await db.from(t).select("id,name");
     lists[t]=(data||[]).sort((a,b)=>a.name.localeCompare(b.name,undefined,{numeric:true}));
     $("l_"+t).innerHTML=lists[t].length?lists[t].map((x,i)=>
@@ -212,7 +300,7 @@ async function loadTT(){
   $("ttl").innerHTML=rows.length?DAYS.map(d=>{
     const r=rows.filter(x=>x.day===d);
     return r.length?`<h2 style="margin:14px 0 4px">${d}</h2>`+r.map(x=>
-      `<div class="item"><div>P${esc(x.period)} · ${esc(x.subject)}<small>${c?"":esc(x.class)+" · "}${esc((x.start_time||"").slice(0,5))}–${esc((x.end_time||"").slice(0,5))}</small></div>
+      `<div class="item"><div>P${esc(x.period)} · ${esc(x.subject)}<small>${c?"":esc(x.class)+" · "}${esc((x.start_time||"").slice(0,5))}–${esc((x.end_time||"").slice(0,5))}${x.teacher||x.venue?" · "+esc([x.teacher,x.venue].filter(Boolean).join(" · ")):""}</small></div>
        <button class="del" onclick="delSlot('${esc(x.id)}')">Delete</button></div>`).join(""):"";
   }).join(""):'<p class="empty">No slots yet.</p>';
 }
@@ -228,7 +316,7 @@ async function run(i){
   fm.f.forEach(([id])=>v[id]=$(`f${i}_${id}`).value.trim());
   for(const [id,,ty,opt] of fm.f)
     if(ty==="select"&&typeof opt==="function"&&!v[id]&&!opt().includes("")){
-      say(m,"Create a class or subject first."); return; }
+      say(m,"Nothing to select yet. Add classes and assign subjects to them first."); return; }
   m.className="msg"; m.textContent="…";
   const {data,error}=await fm.go(v);
   if(error){ say(m,error.code==="23505"||/duplicate key/i.test(error.message)?"That admission number is already in use at this school.":error.message); return; }
@@ -249,7 +337,7 @@ async function signOut(){ await db.auth.signOut(); show(false); }
 function show(on){
   $("login").classList.toggle("hidden",on);
   $("app").classList.toggle("hidden",!on);
-  if(on){ build(); load(); loadTT(); loadStudents(); } else $("pw").value="";
+  if(on){ build(); load(); loadTT(); loadStudents(); loadTeachers(); loadAsg(); } else $("pw").value="";
 }
 show(false);
 </script>
