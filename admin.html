@@ -172,7 +172,7 @@ async function run(i){
       say(m,"Create a class or subject first."); return; }
   m.className="msg"; m.textContent="…";
   const {data,error}=await fm.go(v);
-  if(error){ say(m,error.message); return; }
+  if(error){ say(m,error.code==="23505"||/duplicate key/i.test(error.message)?"That admission number is already in use at this school.":error.message); return; }
   say(m,fm.ok(data),true);
   fm.f.forEach(([id,,ty])=>{ if(ty!=="select") $(`f${i}_${id}`).value=""; });
   if(fm.after) fm.after();
@@ -196,4 +196,3 @@ show(false);
 </script>
 </body>
 </html>
-
