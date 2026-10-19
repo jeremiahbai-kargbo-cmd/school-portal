@@ -7,7 +7,7 @@
 <title>Staff</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.0/dist/umd/supabase.min.js"></script>
 <style>
-  :root{--bg:#fafafa;--card:#fff;--ink:#111;--mute:#888;--line:#eee;--accent:#4f46e5}
+  :root{--bg:#fafafa;--card:#fff;--ink:#111;--mute:#888;--line:#eee;--accent:#4f46e5;--red:#e11d48}
   @media(prefers-color-scheme:dark){
     :root{--bg:#0e0e10;--card:#17171a;--ink:#f2f2f2;--mute:#8a8a90;--line:#26262b;--accent:#818cf8}}
   *{box-sizing:border-box}
@@ -27,8 +27,12 @@
     border-radius:12px;background:var(--accent);cursor:pointer;transition:transform .15s}
   button:active{transform:scale(.97)}
   button.ghost{background:none;color:var(--mute);width:auto;padding:0;margin:0 0 20px;font-weight:500}
-  .msg{margin:10px 0 0;font-size:14px;min-height:20px}
-  .ok{color:#059669;font-weight:600}.bad{color:#e11d48}
+  button.del{background:none;color:var(--red);width:auto;padding:4px 0 4px 12px;font-weight:500}
+  .item{display:flex;justify-content:space-between;align-items:center;padding:9px 0;border-top:1px solid var(--line)}
+  .item small{display:block;color:var(--mute)}
+  .empty{color:var(--mute);margin:0}
+  .msg{margin:10px 0 0;font-size:14px;min-height:20px;word-break:break-word}
+  .ok{color:#059669;font-weight:600}.bad{color:var(--red)}
   .hidden{display:none}
 </style>
 </head>
@@ -45,7 +49,9 @@
 
   <div id="app" class="hidden">
     <button class="ghost" onclick="signOut()">← Sign out</button>
+    <div id="mgr"></div>
     <div id="forms"></div>
+    <div id="ttv"></div>
   </div>
 </main>
 
@@ -54,42 +60,121 @@ const db = supabase.createClient("https://nakgbeitslaffmncbjzp.supabase.co",
   "sb_publishable_9WG3KGWiNqpvPWKygyiQ4g_GIDTKZup");
 const $ = id => document.getElementById(id);
 const rpc = (fn, a) => db.rpc(fn, a);
+const esc = v => String(v??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+const say = (el,t,ok)=>{ el.className="msg "+(ok?"ok":"bad"); el.textContent=t; };
+const DAYS=["Monday","Tuesday","Wednesday","Thursday","Friday"];
+const lists={classes:[],subjects:[]};
+const cls=()=>lists.classes.map(x=>x.name), sub=()=>lists.subjects.map(x=>x.name);
 
 const forms = [
- {t:"Add student", f:[["adm","Admission no"],["name","Full name"],["cls","Class"],["dob","Date of birth","date"],["gu","Guardian"]],
+ {t:"Add student", f:[["adm","Admission no"],["name","Full name"],["cls","Class","select",cls],["dob","Date of birth","date"],["gu","Guardian"]],
   go:v=>rpc("add_student",{p_adm:v.adm,p_name:v.name,p_class:v.cls,p_dob:v.dob||null,p_guardian:v.gu}),
   ok:d=>"Access code: "+d+" — save it now, it can't be shown again"},
  {t:"Reset access code", f:[["adm","Admission no"]],
   go:v=>rpc("reset_code",{p_adm:v.adm}), ok:d=>"New code: "+d},
  {t:"Attendance", f:[["adm","Admission no"],["d","Date","date"],["s","Status","select",["Present","Absent","Late"]]],
   go:v=>rpc("add_attendance",{p_adm:v.adm,p_date:v.d,p_status:v.s}), ok:()=>"Saved"},
- {t:"Grade", f:[["adm","Admission no"],["sub","Subject"],["term","Term"],["sc","Score","number"],["g","Grade"]],
+ {t:"Grade", f:[["adm","Admission no"],["sub","Subject","select",sub],["term","Term"],["sc","Score","number"],["g","Grade"]],
   go:v=>rpc("add_grade",{p_adm:v.adm,p_subject:v.sub,p_term:v.term,p_score:v.sc,p_grade:v.g}), ok:()=>"Saved"},
- {t:"Timetable", f:[["c","Class"],["d","Day","select",["Monday","Tuesday","Wednesday","Thursday","Friday"]],
-   ["p","Period","number"],["s","Subject"],["st","Start","time"],["en","End","time"]],
+ {t:"Timetable slot", f:[["c","Class","select",cls],["d","Day","select",DAYS],["p","Period","number"],
+   ["s","Subject","select",sub],["st","Start","time"],["en","End","time"]],
   go:v=>db.from("timetable").insert({class:v.c,day:v.d,period:v.p,subject:v.s,start_time:v.st,end_time:v.en}),
-  ok:()=>"Saved"},
- {t:"Announcement", f:[["ti","Title"],["b","Message"]],
-  go:v=>db.from("announcements").insert({title:v.ti,body:v.b}), ok:()=>"Posted"}
+  ok:()=>"Saved", after:()=>loadTT()},
+ {t:"Announcement", f:[["ti","Title"],["b","Message"],["c","Send to","select",()=>["",...cls()]],
+   ["adm","Or one student (admission no, optional)"]],
+  go:v=>db.from("announcements").insert({title:v.ti,body:v.b,
+    audience:v.adm?"student":v.c?"class":"all", target:v.adm||v.c||null}),
+  ok:()=>"Posted"}
 ];
 
 function build(){
+  $("mgr").innerHTML=[["classes","Classes","Class name, e.g. 3A"],["subjects","Subjects","Subject name"]].map(([t,h,p])=>
+    `<div class="card"><h2>${h}</h2><div id="l_${t}"></div>
+     <input id="n_${t}" placeholder="${p}" style="margin-top:12px">
+     <button onclick="add('${t}')">Add</button><p class="msg" id="mm_${t}"></p></div>`).join("");
+
   $("forms").innerHTML = forms.map((fm,i)=>`<div class="card" style="animation-delay:${i*.06}s">
     <h2>${fm.t}</h2>`+fm.f.map(([id,l,ty,opt])=>
       ty==="select"
-        ? `<select id="f${i}_${id}">${opt.map(o=>`<option>${o}</option>`).join("")}</select>`
+        ? `<select id="f${i}_${id}">${Array.isArray(opt)?opt.map(o=>`<option>${o}</option>`).join(""):""}</select>`
         : `<input id="f${i}_${id}" type="${ty||"text"}" placeholder="${l}" ${ty==="date"||ty==="time"?`title="${l}"`:""}>`
     ).join("")+`<button onclick="run(${i})">Save</button><p class="msg" id="m${i}"></p></div>`).join("");
+
+  $("ttv").innerHTML=`<div class="card"><h2>School timetable</h2>
+    <select id="ttc" onchange="loadTT()"></select><div id="ttl"></div><p class="msg" id="mtt"></p></div>`;
+}
+
+function fillSelects(){
+  forms.forEach((fm,i)=>fm.f.forEach(([id,,ty,opt])=>{
+    if(ty!=="select"||typeof opt!=="function") return;
+    const s=$(`f${i}_${id}`), keep=s.value;
+    s.innerHTML=opt().map(o=>`<option value="${esc(o)}">${o===""?"All classes":esc(o)}</option>`).join("");
+    if(keep) s.value=keep;
+  }));
+  const tc=$("ttc"), k=tc.value;
+  tc.innerHTML='<option value="">All classes</option>'+cls().map(c=>`<option value="${esc(c)}">${esc(c)}</option>`).join("");
+  if(k) tc.value=k;
+}
+
+async function load(){
+  for(const t of ["classes","subjects"]){
+    const {data}=await db.from(t).select("id,name");
+    lists[t]=(data||[]).sort((a,b)=>a.name.localeCompare(b.name,undefined,{numeric:true}));
+    $("l_"+t).innerHTML=lists[t].length?lists[t].map((x,i)=>
+      `<div class="item"><span>${esc(x.name)}</span><button class="del" onclick="del('${t}',${i})">Delete</button></div>`).join("")
+      :'<p class="empty">None yet.</p>';
+  }
+  fillSelects();
+}
+
+async function add(t){
+  const inp=$("n_"+t), n=inp.value.trim(), m=$("mm_"+t);
+  if(!n){ say(m,"Enter a name."); return; }
+  const {error}=await db.from(t).insert({name:n});
+  if(error){ say(m,error.code==="23505"?"Already exists.":error.message); return; }
+  inp.value=""; say(m,"Added",true); load();
+}
+async function del(t,i){
+  const x=lists[t][i];
+  if(!confirm(`Delete "${x.name}"? Existing records keep the name, but it can no longer be selected.`)) return;
+  const {error}=await db.from(t).delete().eq("id",x.id);
+  if(error){ say($("mm_"+t),error.message); return; }
+  load();
+}
+
+async function loadTT(){
+  const c=$("ttc").value;
+  let q=db.from("timetable").select("*").order("period");
+  if(c) q=q.eq("class",c);
+  const {data,error}=await q;
+  if(error){ say($("mtt"),error.message); return; }
+  const rows=data||[];
+  $("ttl").innerHTML=rows.length?DAYS.map(d=>{
+    const r=rows.filter(x=>x.day===d);
+    return r.length?`<h2 style="margin:14px 0 4px">${d}</h2>`+r.map(x=>
+      `<div class="item"><div>P${esc(x.period)} · ${esc(x.subject)}<small>${c?"":esc(x.class)+" · "}${esc((x.start_time||"").slice(0,5))}–${esc((x.end_time||"").slice(0,5))}</small></div>
+       <button class="del" onclick="delSlot('${esc(x.id)}')">Delete</button></div>`).join(""):"";
+  }).join(""):'<p class="empty">No slots yet.</p>';
+}
+async function delSlot(id){
+  if(!confirm("Delete this timetable slot?")) return;
+  const {error}=await db.from("timetable").delete().eq("id",id);
+  if(error){ say($("mtt"),error.message); return; }
+  loadTT();
 }
 
 async function run(i){
   const fm=forms[i], m=$("m"+i), v={};
   fm.f.forEach(([id])=>v[id]=$(`f${i}_${id}`).value.trim());
+  for(const [id,,ty,opt] of fm.f)
+    if(ty==="select"&&typeof opt==="function"&&!v[id]&&!opt().includes("")){
+      say(m,"Create a class or subject first."); return; }
   m.className="msg"; m.textContent="…";
   const {data,error}=await fm.go(v);
-  if(error){ m.className="msg bad"; m.textContent=error.message; return; }
-  m.className="msg ok"; m.textContent=fm.ok(data);
+  if(error){ say(m,error.message); return; }
+  say(m,fm.ok(data),true);
   fm.f.forEach(([id,,ty])=>{ if(ty!=="select") $(`f${i}_${id}`).value=""; });
+  if(fm.after) fm.after();
 }
 
 async function signIn(){
@@ -102,7 +187,7 @@ async function signOut(){ await db.auth.signOut(); show(false); }
 function show(on){
   $("login").classList.toggle("hidden",on);
   $("app").classList.toggle("hidden",!on);
-  if(on) build(); else $("pw").value="";
+  if(on){ build(); load(); loadTT(); } else $("pw").value="";
 }
 db.auth.getSession().then(({data})=>show(!!data.session));
 </script>
