@@ -85,7 +85,8 @@
 
 <script>
 const db = supabase.createClient("https://nakgbeitslaffmncbjzp.supabase.co",
-  "sb_publishable_9WG3KGWiNqpvPWKygyiQ4g_GIDTKZup");
+  "sb_publishable_9WG3KGWiNqpvPWKygyiQ4g_GIDTKZup",
+  {auth:{persistSession:false, autoRefreshToken:false, detectSessionInUrl:false}});
 const $ = id => document.getElementById(id);
 const esc = v => { const d=document.createElement('div'); d.textContent=v??''; return d.innerHTML; };
 let schools = [], staff = [];
@@ -207,8 +208,7 @@ function show(on){
   $("app").classList.toggle("hidden",!on);
   if(!on) $("pw").value="";
 }
-db.auth.getSession().then(({data})=>{ if(data.session) gate(); });
+show(false);
 </script>
 </body>
 </html>
-
