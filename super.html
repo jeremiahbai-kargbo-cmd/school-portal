@@ -53,6 +53,15 @@
   <div id="app" class="hidden">
     <button class="ghost" onclick="signOut()">← Sign out</button>
 
+    <div class="card" id="pwcard">
+      <h2>Set a password</h2>
+      <select id="pwtarget"></select>
+      <input id="newpw" type="password" placeholder="New password (min 8 characters)" autocomplete="new-password">
+      <input id="newpw2" type="password" placeholder="Confirm new password" autocomplete="new-password">
+      <button onclick="setPassword()">Save password</button>
+      <p id="m5" class="msg"></p>
+    </div>
+
     <div class="card">
       <h2>Add school</h2>
       <input id="sname" placeholder="School name">
@@ -83,6 +92,14 @@ let schools = [], staff = [];
 
 function say(id, text, ok){ const m=$(id); m.className="msg "+(ok?"ok":"bad"); m.textContent=text; }
 
+function fillTargets(){
+  const keep = $("pwtarget").value || "me";
+  $("pwtarget").innerHTML = '<option value="me">My account (super admin)</option>' +
+    staff.map((x,i)=>`<option value="${i}">${esc(x.email)}</option>`).join("");
+  $("pwtarget").value = keep;
+  if($("pwtarget").value !== keep) $("pwtarget").value = "me";
+}
+
 async function refresh(){
   const a = await db.rpc("sa_list_schools");
   if(a.error){ say("m2", a.error.message); return; }
@@ -98,9 +115,35 @@ async function refresh(){
   staff = b.data || [];
   $("staff").innerHTML = staff.length ? staff.map((x,i)=>
     `<div class="item"><div>${esc(x.email)}<small>${esc(x.school_name)}</small></div>
-     <div class="acts"><button class="sm" onclick="resetPw(${i})">Reset</button>
+     <div class="acts"><button class="sm" onclick="pickPw(${i})">Set password</button>
+     <button class="sm" onclick="resetPw(${i})">Random</button>
      <button class="del" onclick="rmStaff(${i})">Remove</button></div></div>`).join("")
     : '<p class="empty">No staff yet.</p>';
+  fillTargets();
+}
+
+function pickPw(i){
+  $("pwtarget").value = String(i);
+  $("pwcard").scrollIntoView({behavior:"smooth", block:"center"});
+  $("newpw").focus();
+}
+
+async function setPassword(){
+  const t = $("pwtarget").value, p = $("newpw").value, p2 = $("newpw2").value;
+  if(p.length < 8){ say("m5","Password must be at least 8 characters."); return; }
+  if(p !== p2){ say("m5","Passwords don't match."); return; }
+  let error, who;
+  if(t === "me"){
+    who = "Your";
+    ({error} = await db.auth.updateUser({password:p}));
+  } else {
+    const x = staff[+t];
+    who = x.email + "'s";
+    ({error} = await db.rpc("sa_set_staff_password",{p_user:x.user_id,p_password:p}));
+  }
+  if(error){ say("m5",error.message); return; }
+  $("newpw").value = ""; $("newpw2").value = "";
+  say("m5",`${who} password was updated.`,true);
 }
 
 async function addSchool(){
@@ -133,7 +176,7 @@ async function addStaff(){
 
 async function resetPw(i){
   const x = staff[i];
-  if(!confirm(`Reset password for ${x.email}?`)) return;
+  if(!confirm(`Generate a random password for ${x.email}?`)) return;
   const {data,error} = await db.rpc("sa_reset_staff_password",{p_user:x.user_id});
   if(error){ say("m4",error.message); return; }
   say("m4",`${x.email} new password: ${data} (shown once)`,true);
