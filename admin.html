@@ -6,6 +6,8 @@
 <meta name="robots" content="noindex">
 <title>Staff</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.0/dist/umd/supabase.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.2/jspdf.plugin.autotable.min.js"></script>
 <style>
   :root{--bg:#fafafa;--card:#fff;--ink:#111;--mute:#888;--line:#eee;--accent:#4f46e5;--red:#e11d48}
   @media(prefers-color-scheme:dark){
@@ -30,6 +32,8 @@
   button.del{background:none;color:var(--red);width:auto;padding:4px 0 4px 12px;font-weight:500}
   button.sm{background:none;color:var(--accent);width:auto;padding:4px 0 4px 12px;font-weight:500}
   .acts{display:flex;white-space:nowrap}
+  .chip{width:92px;padding:8px 0;font-size:13px}
+  .chip.Present{background:#10b981}.chip.Absent{background:#e11d48}.chip.Late{background:#f59e0b}
   .item{display:flex;justify-content:space-between;align-items:center;padding:9px 0;border-top:1px solid var(--line)}
   .item small{display:block;color:var(--mute)}
   .empty{color:var(--mute);margin:0}
@@ -51,12 +55,14 @@
 
   <div id="app" class="hidden">
     <button class="ghost" onclick="signOut()">← Sign out</button>
+    <div id="reg"></div>
     <div id="mgr"></div>
     <div id="tch"></div>
     <div id="cs"></div>
     <div id="forms"></div>
     <div id="stv"></div>
     <div id="ttv"></div>
+    <div id="rep"></div>
   </div>
 </main>
 
@@ -97,6 +103,20 @@ const forms = [
 ];
 
 function build(){
+  $("reg").innerHTML=`<div class="card"><h2>Daily register</h2>
+    <input id="rg_date" type="date"><select id="rg_cls"></select>
+    <button onclick="loadRegister()">Open class register</button><div id="rg_list"></div><p class="msg" id="rg_msg"></p>
+    <h2 style="margin-top:18px">Upload for the whole school</h2>
+    <input id="rg_file" type="file" accept=".csv,.txt">
+    <label style="display:flex;gap:8px;align-items:center;margin:0 0 10px"><input type="checkbox" id="rg_rest" checked style="width:auto;margin:0"> Pupils not in the file are Present</label>
+    <button onclick="uploadAtt()">Upload file</button><p class="msg" id="rg_msg2"></p>
+    <small style="color:var(--mute)">CSV with two columns: admission_no, status (Present, Absent or Late). Tip: list only absent and late pupils and keep the box ticked. The date above applies.</small></div>`;
+  $("rep").innerHTML=`<div class="card"><h2>Weekly report</h2>
+    <input id="rw" type="date" title="Any date in the week"><input id="rp" type="number" value="50" title="Pass mark" placeholder="Pass mark">
+    <button onclick="genReport()">Generate PDF report</button><p class="msg" id="mr"></p>
+    <small style="color:var(--mute)">Pick any date in the week. The pass mark is used for academic pass rates.</small></div>`;
+  $("rg_date").value=todayStr(); $("rw").value=mondayStr();
+
   $("mgr").innerHTML=[["classes","Classes","Class name, e.g. 3A"],["subjects","Subjects","Subject name"],["venues","Venues","Venue name, e.g. Room 4"]].map(([t,h,p])=>
     `<div class="card"><h2>${h}</h2><div id="l_${t}"></div>
      <input id="n_${t}" placeholder="${p}" style="margin-top:12px">
@@ -155,6 +175,7 @@ function fillSelects(){
   fill("a_s",lists.subjects.map(x=>[x.name,x.name]));
   fill("a_t",teachers.map(x=>[x.id,x.full_name]),"No teacher yet");
   fill("a_v",lists.venues.map(x=>[x.id,x.name]),"No venue yet");
+  fill("rg_cls",lists.classes.map(x=>[x.name,x.name]));
 }
 
 let tEdit=null;
@@ -260,8 +281,8 @@ function renderStudents(){
   const q=$("sq").value.trim().toLowerCase(), c=$("sc").value;
   const r=students.filter(s=>(!c||s.class===c)&&(!q||String(s.name).toLowerCase().includes(q)||String(s.admission_no).toLowerCase().includes(q)));
   $("scount").textContent="("+r.length+")";
-  $("sl").innerHTML=r.length?r.map(s=>{const i=students.indexOf(s);return `<div class="item"><div>${esc(s.name)}<small>${esc(s.admission_no)} · ${esc(s.class)}${s.guardian?" · "+esc(s.guardian):""}</small></div>
-    <div class="acts"><button class="sm" onclick="editStudent(${i})">Edit</button><button class="del" onclick="delStudent(${i})">Delete</button></div></div>`}).join(""):'<p class="empty">No students found.</p>';
+  $("sl").innerHTML=r.length?r.slice(0,200).map(s=>{const i=students.indexOf(s);return `<div class="item"><div>${esc(s.name)}<small>${esc(s.admission_no)} · ${esc(s.class)}${s.guardian?" · "+esc(s.guardian):""}</small></div>
+    <div class="acts"><button class="sm" onclick="editStudent(${i})">Edit</button><button class="del" onclick="delStudent(${i})">Delete</button></div></div>`}).join("")+(r.length>200?'<p class="empty" style="margin-top:10px">Showing 200 of '+r.length+'. Use search or the class filter.</p>':""):'<p class="empty">No students found.</p>';
 }
 
 async function load(){
@@ -323,6 +344,207 @@ async function run(i){
   say(m,fm.ok(data),true);
   fm.f.forEach(([id,,ty])=>{ if(ty!=="select") $(`f${i}_${id}`).value=""; });
   if(fm.after) fm.after();
+}
+
+/* ---------- Daily register ---------- */
+let reg={}, regRows=[];
+const normStatus=x=>{ const s=String(x||"").trim().toLowerCase(); return s.startsWith("p")?"Present":s.startsWith("a")?"Absent":s.startsWith("l")?"Late":null; };
+const localISO=d=>new Date(d-d.getTimezoneOffset()*6e4).toISOString().slice(0,10);
+function todayStr(){ return localISO(new Date()); }
+function mondayStr(){ const d=new Date(); d.setDate(d.getDate()-((d.getDay()+6)%7)); return localISO(d); }
+
+function loadRegister(){
+  const c=$("rg_cls").value;
+  if(!c){ say($("rg_msg"),"Add classes first."); return; }
+  regRows=students.filter(s=>s.class===c).sort((a,b)=>String(a.name).localeCompare(b.name));
+  reg={}; regRows.forEach(s=>reg[s.admission_no]="Present");
+  renderRegister(); $("rg_msg").textContent="";
+}
+function renderRegister(){
+  if(!regRows.length){ $("rg_list").innerHTML='<p class="empty" style="margin-top:12px">No students in this class.</p>'; return; }
+  $("rg_list").innerHTML='<p class="empty" style="margin:12px 0 4px">Everyone starts as Present. Tap a pupil to change: Present, Absent, Late.</p>'+
+    regRows.map((s,i)=>`<div class="item"><div>${esc(s.name)}<small>${esc(s.admission_no)}</small></div>
+    <button class="chip Present" id="ch${i}" onclick="cycle(${i})">Present</button></div>`).join("")+
+    '<p class="msg" id="rg_sum"></p><button onclick="saveRegister()">Save attendance</button>';
+  sumRegister();
+}
+function cycle(i){
+  const a=regRows[i].admission_no, n=["Present","Absent","Late"][(["Present","Absent","Late"].indexOf(reg[a])+1)%3];
+  reg[a]=n; const b=$("ch"+i); b.textContent=n; b.className="chip "+n; sumRegister();
+}
+function sumRegister(){
+  const v=Object.values(reg), ab=v.filter(x=>x==="Absent").length, lt=v.filter(x=>x==="Late").length;
+  const e=$("rg_sum"); if(e){ e.className="msg"; e.textContent=`${v.length} pupils: ${v.length-ab-lt} present, ${ab} absent, ${lt} late`; }
+}
+async function saveRegister(){
+  const recs=regRows.map(s=>({adm:s.admission_no,status:reg[s.admission_no]}));
+  await saveRecords(recs,$("rg_date").value,$("rg_msg"));
+}
+async function saveRecords(recs,date,m){
+  if(!date){ say(m,"Choose a date."); return null; }
+  let saved=0,skipped=0,errs=[];
+  for(let i=0;i<recs.length;i+=400){
+    say(m,`Saving ${Math.min(i+400,recs.length)} of ${recs.length}…`,true);
+    const {data,error}=await rpc("add_attendance_bulk",{p_date:date,p_records:recs.slice(i,i+400)});
+    if(error){ say(m,error.message); return null; }
+    saved+=data.saved; skipped+=data.skipped; errs.push(...data.errors);
+  }
+  let t=`Saved ${saved} of ${recs.length}.`;
+  if(skipped) t+=` ${skipped} already had a record for that date.`;
+  if(errs.length) t+=` ${errs.length} failed (e.g. ${errs.slice(0,3).map(e=>e.adm+": "+e.err).join("; ")}).`;
+  say(m,t,!errs.length&&!skipped);
+  return {saved,skipped,errs};
+}
+async function uploadAtt(){
+  const f=$("rg_file").files[0], m=$("rg_msg2"), date=$("rg_date").value;
+  if(!f){ say(m,"Choose a file."); return; }
+  if(!date){ say(m,"Choose a date."); return; }
+  const lines=(await f.text()).split(/\r?\n/).map(l=>l.trim()).filter(Boolean);
+  const map=new Map(); let bad=0;
+  lines.forEach((l,i)=>{
+    const [a,s]=l.split(/[,;\t]/).map(x=>x.trim().replace(/^"|"$/g,""));
+    if(!a||(i===0&&/adm|number|^id$/i.test(a))) return;
+    const st=normStatus(s)||(s===undefined?"Absent":null);
+    if(!st){ bad++; return; }
+    map.set(a,st);
+  });
+  if($("rg_rest").checked){
+    if(!students.length){ say(m,"Student list hasn't loaded yet. Try again."); return; }
+    students.forEach(s=>{ if(!map.has(s.admission_no)) map.set(s.admission_no,"Present"); });
+  }
+  const recs=[...map].map(([adm,status])=>({adm,status}));
+  if(!recs.length){ say(m,"No valid rows found."); return; }
+  if(!confirm(`Save ${recs.length} attendance records for ${date}?`)) return;
+  const r=await saveRecords(recs,date,m);
+  if(r&&bad) m.textContent+=` ${bad} unreadable rows were ignored.`;
+}
+
+/* ---------- Weekly report (PDF) ---------- */
+const pct=(a,b)=>b?100*a/b:0, f1=x=>(+x).toFixed(1);
+const isoAdd=(s,n)=>{ const x=new Date(s+"T00:00:00Z"); x.setUTCDate(x.getUTCDate()+n); return x.toISOString().slice(0,10); };
+const dayName=s=>new Date(s+"T00:00:00Z").toUTCString().slice(0,3);
+const niceDate=s=>new Date(s+"T00:00:00Z").toLocaleDateString("en-GB",{day:"numeric",month:"short",year:"numeric",timeZone:"UTC"});
+function wilson(k,n){ if(!n) return [0,0]; const z=1.96,p=k/n,d=1+z*z/n,c=p+z*z/(2*n),h=z*Math.sqrt(p*(1-p)/n+z*z/(4*n*n)); return [100*(c-h)/d,100*(c+h)/d]; }
+function pval(z){ z=Math.abs(z); const t=1/(1+0.2316419*z), d=0.3989423*Math.exp(-z*z/2);
+  return 2*d*t*(0.3193815+t*(-0.3565638+t*(1.781478+t*(-1.821256+t*1.330274)))); }
+function bars(doc,x,y,w,h,labels,vals,color){
+  const g=w/vals.length, bw=g*0.6;
+  doc.setDrawColor(200); doc.line(x,y+h,x+w,y+h);
+  vals.forEach((v,i)=>{ const bh=Math.max(0,Math.min(100,v))/100*h;
+    doc.setFillColor(...color); doc.rect(x+i*g+(g-bw)/2,y+h-bh,bw,bh,"F");
+    doc.setFontSize(8); doc.setTextColor(60);
+    doc.text(f1(v)+"%",x+i*g+g/2,y+h-bh-1.5,{align:"center"}); doc.text(labels[i],x+i*g+g/2,y+h+4,{align:"center"}); });
+}
+
+async function genReport(){
+  const m=$("mr"), wk=$("rw").value, pass=+$("rp").value||50;
+  if(!wk){ say(m,"Choose a week."); return; }
+  if(!(window.jspdf&&window.jspdf.jsPDF)){ say(m,"PDF tools are still loading. Try again in a moment."); return; }
+  say(m,"Analysing the data…",true);
+  const {data:d,error}=await rpc("weekly_report",{p_week:wk,p_pass:pass});
+  if(error){ say(m,error.message); return; }
+  const w0=d.week_start;
+  const agg=rs=>rs.reduce((a,r)=>({p:a.p+r.present,a:a.a+r.absent,l:a.l+r.late,t:a.t+r.total}),{p:0,a:0,l:0,t:0});
+  const inWk=(r,k)=>r.d>=isoAdd(w0,-7*k)&&r.d<=isoAdd(w0,-7*k+4);
+  const W=[3,2,1,0].map(k=>({k,...agg(d.days.filter(r=>inWk(r,k)))}));
+  const cur=W[3], prev=W[2], att=x=>x.p+x.l, rate=x=>pct(att(x),x.t);
+  if(!cur.t){ say(m,"No attendance has been recorded for that week."); return; }
+  const [lo,hi]=wilson(att(cur),cur.t), P=att(cur)/cur.t;
+  let chg=null,pv=null;
+  if(prev.t){ const p0=att(prev)/prev.t, pp=(att(cur)+att(prev))/(cur.t+prev.t), se=Math.sqrt(pp*(1-pp)*(1/cur.t+1/prev.t));
+    chg=100*(P-p0); pv=se>0?pval((P-p0)/se):1; }
+  const sigTxt=pv===null?"":pv<0.05?"statistically significant":"not statistically significant";
+  const dir=chg===null?"":Math.abs(chg)<0.05?"unchanged":chg>0?"up":"down";
+  const daysW=d.days.filter(r=>inWk(r,0)).sort((a,b)=>a.d.localeCompare(b.d));
+  const comp=daysW.map(r=>pct(r.total,d.enrolled));
+  const cls=d.by_class.map(r=>{ const pc=att(r)/r.total, z=(P>0&&P<1)?(pc-P)/Math.sqrt(P*(1-P)/r.total):0;
+    return {...r,rate:100*pc,late:pct(r.late,r.total),abs:pct(r.absent,r.total),flag:z<-1.96?"Below":z>1.96?"Above":"In line"}; }).sort((a,b)=>a.rate-b.rate);
+  const atRiskN=d.absence_dist.filter(x=>x.ab>=2).reduce((s,x)=>s+x.n,0);
+  const prevAt=null;
+  const gs=d.grades_subject, gn=gs.reduce((s,r)=>s+r.n,0);
+  const gMean=gn?gs.reduce((s,r)=>s+r.mean*r.n,0)/gn:0, gPass=gn?100*gs.reduce((s,r)=>s+r.pass_n,0)/gn:0;
+  const cov=d.coverage;
+
+  const sum=[];
+  sum.push(`Attendance: ${f1(100*P)}% of pupil-days were attended (95% confidence interval ${f1(lo)}% to ${f1(hi)}%) across ${d.enrolled} enrolled pupils.`+
+    (chg===null?" There is no previous week to compare against.":` This is ${dir==="unchanged"?"unchanged":dir+" "+f1(Math.abs(chg))+" percentage points"} from last week, a change that is ${sigTxt} (p = ${pv<0.001?"<0.001":pv.toFixed(3)}).`));
+  if(cls.length>1) sum.push(`Strongest class: ${cls[cls.length-1].class} (${f1(cls[cls.length-1].rate)}%). Weakest class: ${cls[0].class} (${f1(cls[0].rate)}%). ${cls.filter(c=>c.flag==="Below").length} class(es) were significantly below the school average.`);
+  sum.push(`${atRiskN} pupils (${f1(pct(atRiskN,d.enrolled))}% of enrolment) were absent on 2 or more days this week.`);
+  const lowC=daysW.filter((r,i)=>comp[i]<95);
+  if(lowC.length) sum.push(`Data quality warning: attendance was recorded for fewer than 95% of pupils on ${lowC.map(r=>dayName(r.d)).join(", ")}. Rates for those days may be unreliable.`);
+  if(gn) sum.push(`Academic records: ${gn} scores on file, average ${f1(gMean)}, with ${f1(gPass)}% at or above the pass mark of ${pass}.`);
+  if(cov.classes_without_subjects.length||cov.without_teacher) sum.push(`Staffing and curriculum: ${cov.classes_without_subjects.length} class(es) have no subjects assigned and ${cov.without_teacher} of ${cov.assignments} class-subject assignments have no teacher.`);
+
+  const doc=new window.jspdf.jsPDF({unit:"mm",format:"a4"}), L=15, R=195; let y=0;
+  const H=t=>{ if(y>250){ doc.addPage(); y=20; } doc.setFont("helvetica","bold"); doc.setFontSize(13); doc.setTextColor(30); doc.text(t,L,y);
+    doc.setDrawColor(79,70,229); doc.setLineWidth(.6); doc.line(L,y+2,L+12,y+2); y+=9; };
+  const Pg=(t,sz=10,col=60)=>{ doc.setFont("helvetica","normal"); doc.setFontSize(sz); doc.setTextColor(col);
+    doc.splitTextToSize(t,R-L).forEach(l=>{ if(y>280){ doc.addPage(); y=20; } doc.text(l,L,y); y+=sz*0.42+1.4; }); y+=1.5; };
+  const T=(head,body)=>{ doc.autoTable({startY:y,head:[head],body,styles:{fontSize:9,cellPadding:2},headStyles:{fillColor:[79,70,229]},margin:{left:L,right:15}}); y=doc.lastAutoTable.finalY+8; };
+
+  let schoolName="School"; try{ const {data:sl}=await rpc("list_schools"); const s=(sl||[]).find(x=>x.id===d.school_id); if(s) schoolName=s.name; }catch(e){}
+  doc.setFillColor(79,70,229); doc.rect(0,0,210,34,"F");
+  doc.setTextColor(255); doc.setFont("helvetica","bold"); doc.setFontSize(18); doc.text("Weekly School Report",L,15);
+  doc.setFont("helvetica","normal"); doc.setFontSize(10); doc.text(`${schoolName}  |  ${niceDate(w0)} to ${niceDate(isoAdd(w0,4))}`,L,23);
+  doc.setFontSize(8); doc.text(`Generated ${niceDate(localISO(new Date()))}`,L,29);
+  y=46;
+
+  H("1. Executive summary"); sum.forEach(s=>Pg("- "+s));
+
+  H("2. Key indicators");
+  const arrow=(a,b,inv)=>b==null?"n/a":(a-b>=0?"+":"")+f1(a-b)+" pts";
+  const pr=prev.t?rate(prev):null;
+  T(["Indicator","This week","Last week","Change"],[
+    ["Attendance rate (present + late)",f1(rate(cur))+"%",pr==null?"n/a":f1(pr)+"%",pr==null?"n/a":arrow(rate(cur),pr)],
+    ["95% confidence interval",`${f1(lo)}% - ${f1(hi)}%`,"",""],
+    ["Absence rate",f1(pct(cur.a,cur.t))+"%",prev.t?f1(pct(prev.a,prev.t))+"%":"n/a",prev.t?arrow(pct(cur.a,cur.t),pct(prev.a,prev.t)):"n/a"],
+    ["Late rate",f1(pct(cur.l,cur.t))+"%",prev.t?f1(pct(prev.l,prev.t))+"%":"n/a",prev.t?arrow(pct(cur.l,cur.t),pct(prev.l,prev.t)):"n/a"],
+    ["Pupils absent 2+ days",`${atRiskN} (${f1(pct(atRiskN,d.enrolled))}%)`,"",""],
+    ["Enrolment",String(d.enrolled),"",""],
+    ["Pupil-days recorded",String(cur.t),String(prev.t||"n/a"),""]]);
+
+  H("3. Daily attendance");
+  if(y>200){ doc.addPage(); y=20; }
+  bars(doc,L+5,y+4,R-L-10,40,daysW.map(r=>dayName(r.d)),daysW.map(r=>pct(r.present+r.late,r.total)),[79,70,229]); y+=58;
+  T(["Day","Date","Recorded","Present","Late","Absent","Rate","Coverage"],daysW.map((r,i)=>[dayName(r.d),niceDate(r.d),r.total,r.present,r.late,r.absent,f1(pct(r.present+r.late,r.total))+"%",f1(comp[i])+"%"]));
+
+  const tr=W.filter(w=>w.t);
+  if(tr.length>1){ H("4. Four-week trend"); if(y>200){ doc.addPage(); y=20; }
+    bars(doc,L+10,y+4,R-L-20,38,tr.map(w=>"Wk "+niceDate(isoAdd(w0,-7*w.k)).slice(0,6)),tr.map(rate),[16,185,129]); y+=56; }
+
+  H("5. Attendance by class");
+  T(["Class","Pupil-days","Attendance","Late","Absent","Versus school"],cls.map(c=>[c.class,c.total,f1(c.rate)+"%",f1(c.late)+"%",f1(c.abs)+"%",c.flag]));
+
+  H("6. Pupils needing attention (absent 2+ days)");
+  if(d.at_risk.length) T(["Name","Class","Admission","Absent","Late"],d.at_risk.map(r=>[r.name,r.class,r.adm,r.absent,r.late]));
+  else Pg("No pupils were absent on two or more days.");
+  if(atRiskN>d.at_risk.length) Pg(`Showing the ${d.at_risk.length} highest of ${atRiskN} pupils.`,9,110);
+
+  H("7. Academic performance");
+  if(gs.length){
+    T(["Subject","Term","Scores","Mean (95% CI)","Median","Std dev","Pass rate"],gs.map(r=>{ const e=r.n>1?1.96*r.sd/Math.sqrt(r.n):0;
+      return [r.subject,r.term,r.n,`${f1(r.mean)} (${f1(r.mean-e)}-${f1(r.mean+e)})`,f1(r.median),f1(r.sd),f1(pct(r.pass_n,r.n))+"%"]; }));
+    T(["Class","Term","Scores","Mean","Pass rate"],d.grades_class.map(r=>[r.class,r.term,r.n,f1(r.mean),f1(pct(r.pass_n,r.n))+"%"]));
+    Pg("Grades are recorded per term, so this section is a cumulative snapshot, not a measure of this week alone.",9,110);
+  } else Pg("No grades have been recorded yet.");
+
+  H("8. Curriculum and staffing coverage");
+  T(["Measure","Value"],[["Teachers on record",String(cov.teachers)],["Class-subject assignments",String(cov.assignments)],
+    ["Assignments with no teacher",String(cov.without_teacher)],["Classes with no subjects assigned",cov.classes_without_subjects.join(", ")||"None"]]);
+
+  H("9. Method and definitions");
+  [`Attendance rate = (present + late) / all recorded pupil-days. Absence rate = absent / all recorded pupil-days.`,
+   `Confidence interval: Wilson score interval at 95%, which stays reliable for rates near 100%.`,
+   `Week-on-week change: two-proportion z-test. "Statistically significant" means a gap this size would occur by chance less than 5% of the time. Pupil-days are treated as independent, so p-values are approximate.`,
+   `Class comparison: each class's attendance is tested against the school-wide rate; "Below" or "Above" means the gap exceeds 1.96 standard errors.`,
+   `Coverage = pupils with an attendance record that day / enrolled pupils. Below 95% means the rate may be unreliable.`,
+   `Pass mark used: ${pass}. Mean confidence intervals use mean +/- 1.96 x standard deviation / square root of n.`,
+   `Limitations: figures depend on the accuracy and completeness of data entered by staff. Small classes produce wide uncertainty.`].forEach(s=>Pg("- "+s,9,90));
+
+  const n=doc.getNumberOfPages();
+  for(let i=1;i<=n;i++){ doc.setPage(i); doc.setFontSize(8); doc.setTextColor(140); doc.text(`${schoolName} - Weekly School Report - Page ${i} of ${n}`,105,291,{align:"center"}); }
+  doc.save(`weekly-report-${w0}.pdf`);
+  say(m,"Report downloaded.",true);
 }
 
 async function signIn(){
