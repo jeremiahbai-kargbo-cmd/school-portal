@@ -32,6 +32,9 @@
   button.del{background:none;color:var(--red);width:auto;padding:4px 0 4px 12px;font-weight:500}
   button.sm{background:none;color:var(--accent);width:auto;padding:4px 0 4px 12px;font-weight:500}
   .acts{display:flex;white-space:nowrap}
+  textarea{width:100%;padding:13px;margin-bottom:10px;font:inherit;color:var(--ink);background:var(--bg);border:1px solid var(--line);border-radius:12px;resize:vertical}
+  .pl{display:inline-block;padding:4px 10px;border-radius:99px;font-size:12px;margin:0 6px 6px 0;color:#fff;cursor:pointer}
+  .pl-ok{background:#10b981}.pl-part{background:#f59e0b}.pl-none{background:#e11d48}
   .chip{width:92px;padding:8px 0;font-size:13px}
   .chip.Present{background:#10b981}.chip.Absent{background:#e11d48}.chip.Late{background:#f59e0b}
   .item{display:flex;justify-content:space-between;align-items:center;padding:9px 0;border-top:1px solid var(--line)}
@@ -55,6 +58,7 @@
 
   <div id="app" class="hidden">
     <button class="ghost" onclick="signOut()">← Sign out</button>
+    <div id="rep"></div>
     <div id="reg"></div>
     <div id="mgr"></div>
     <div id="tch"></div>
@@ -62,7 +66,6 @@
     <div id="forms"></div>
     <div id="stv"></div>
     <div id="ttv"></div>
-    <div id="rep"></div>
   </div>
 </main>
 
@@ -103,19 +106,24 @@ const forms = [
 ];
 
 function build(){
-  $("reg").innerHTML=`<div class="card"><h2>Daily register</h2>
-    <input id="rg_date" type="date"><select id="rg_cls"></select>
-    <button onclick="loadRegister()">Open class register</button><div id="rg_list"></div><p class="msg" id="rg_msg"></p>
-    <h2 style="margin-top:18px">Upload for the whole school</h2>
-    <input id="rg_file" type="file" accept=".csv,.txt">
-    <label style="display:flex;gap:8px;align-items:center;margin:0 0 10px"><input type="checkbox" id="rg_rest" checked style="width:auto;margin:0"> Pupils not in the file are Present</label>
-    <button onclick="uploadAtt()">Upload file</button><p class="msg" id="rg_msg2"></p>
-    <small style="color:var(--mute)">CSV with two columns: admission_no, status (Present, Absent or Late). Tip: list only absent and late pupils and keep the box ticked. The date above applies.</small></div>`;
-  $("rep").innerHTML=`<div class="card"><h2>Weekly report</h2>
+  $("reg").innerHTML=`<div class="card"><h2>Daily attendance</h2>
+    <input id="rg_date" type="date"><div id="rg_stat"></div>
+    <h2 style="margin-top:14px">Whole school: list who is absent or late</h2>
+    <textarea id="rg_abs" rows="3" placeholder="Absent: admission numbers, separated by commas, spaces or new lines"></textarea>
+    <textarea id="rg_late" rows="2" placeholder="Late: admission numbers"></textarea>
+    <input id="rg_file" type="file" accept=".csv,.txt" title="Optional CSV: admission_no,status">
+    <label style="display:flex;gap:8px;align-items:center;margin:0 0 10px"><input type="checkbox" id="rg_rest" checked style="width:auto;margin:0"> Everyone not listed is Present</label>
+    <button onclick="saveWhole()">Review and save for the whole school</button><p class="msg" id="rg_msg2"></p>
+    <small style="color:var(--mute)">Optional CSV: admission_no, status (Present, Absent, Late). Saving again for the same date overwrites earlier marks.</small>
+    <h2 style="margin-top:18px">One class at a time</h2>
+    <select id="rg_cls"></select><button onclick="loadRegister()">Open class register</button>
+    <div id="rg_list"></div><p class="msg" id="rg_msg"></p></div>`;
+  $("rep").innerHTML=`<div class="card"><h2>Weekly report (PDF)</h2>
     <input id="rw" type="date" title="Any date in the week"><input id="rp" type="number" value="50" title="Pass mark" placeholder="Pass mark">
-    <button onclick="genReport()">Generate PDF report</button><p class="msg" id="mr"></p>
+    <button onclick="genReport()">Download weekly report (PDF)</button><p class="msg" id="mr"></p>
     <small style="color:var(--mute)">Pick any date in the week. The pass mark is used for academic pass rates.</small></div>`;
   $("rg_date").value=todayStr(); $("rw").value=mondayStr();
+  $("rg_date").onchange=()=>{ loadStatus(); if(regRows.length) loadRegister(); };
 
   $("mgr").innerHTML=[["classes","Classes","Class name, e.g. 3A"],["subjects","Subjects","Subject name"],["venues","Venues","Venue name, e.g. Room 4"]].map(([t,h,p])=>
     `<div class="card"><h2>${h}</h2><div id="l_${t}"></div>
@@ -351,20 +359,35 @@ let reg={}, regRows=[];
 const normStatus=x=>{ const s=String(x||"").trim().toLowerCase(); return s.startsWith("p")?"Present":s.startsWith("a")?"Absent":s.startsWith("l")?"Late":null; };
 const localISO=d=>new Date(d-d.getTimezoneOffset()*6e4).toISOString().slice(0,10);
 function todayStr(){ return localISO(new Date()); }
-function mondayStr(){ const d=new Date(); d.setDate(d.getDate()-((d.getDay()+6)%7)); return localISO(d); }
+function mondayStr(){ const d=new Date(), dow=(d.getDay()+6)%7; d.setDate(d.getDate()-dow-(dow<2?7:0)); return localISO(d); }
 
-function loadRegister(){
-  const c=$("rg_cls").value;
+async function loadRegister(){
+  const c=$("rg_cls").value, date=$("rg_date").value;
   if(!c){ say($("rg_msg"),"Add classes first."); return; }
-  regRows=students.filter(s=>s.class===c).sort((a,b)=>String(a.name).localeCompare(b.name));
+  regRows=students.filter(s=>s.class===c).sort((a,b)=>String(a.name).localeCompare(String(b.name)));
   reg={}; regRows.forEach(s=>reg[s.admission_no]="Present");
-  renderRegister(); $("rg_msg").textContent="";
+  let had=0;
+  if(date){ const {data}=await rpc("attendance_for",{p_date:date,p_class:c});
+    (data||[]).forEach(r=>{ const st=normStatus(r.status); if(st&&r.adm in reg){ reg[r.adm]=st; had++; } }); }
+  renderRegister();
+  $("rg_msg").className="msg"; $("rg_msg").textContent=had?"Showing attendance already saved for this date. Saving will overwrite it.":"";
+}
+function openClass(i){ $("rg_cls").value=statRows[i].class; loadRegister(); $("rg_cls").scrollIntoView({behavior:"smooth",block:"center"}); }
+let statRows=[];
+async function loadStatus(){
+  const date=$("rg_date").value, e=$("rg_stat"); if(!date||!e) return;
+  const {data,error}=await rpc("attendance_status",{p_date:date});
+  if(error){ e.innerHTML=""; return; }
+  statRows=(data||[]).sort((a,b)=>String(a.class).localeCompare(String(b.class),undefined,{numeric:true}));
+  const rec=statRows.reduce((s,x)=>s+x.recorded,0), en=statRows.reduce((s,x)=>s+x.enrolled,0);
+  e.innerHTML=`<p class="empty" style="margin:0 0 8px">${rec} of ${en} pupils recorded for this date. Tap a class to open it.</p>`+
+    statRows.map((x,i)=>`<span class="pl ${x.recorded>=x.enrolled?"pl-ok":x.recorded?"pl-part":"pl-none"}" onclick="openClass(${i})">${esc(x.class)} · ${x.recorded}/${x.enrolled}</span>`).join("");
 }
 function renderRegister(){
   if(!regRows.length){ $("rg_list").innerHTML='<p class="empty" style="margin-top:12px">No students in this class.</p>'; return; }
   $("rg_list").innerHTML='<p class="empty" style="margin:12px 0 4px">Everyone starts as Present. Tap a pupil to change: Present, Absent, Late.</p>'+
     regRows.map((s,i)=>`<div class="item"><div>${esc(s.name)}<small>${esc(s.admission_no)}</small></div>
-    <button class="chip Present" id="ch${i}" onclick="cycle(${i})">Present</button></div>`).join("")+
+    <button class="chip ${reg[s.admission_no]}" id="ch${i}" onclick="cycle(${i})">${reg[s.admission_no]}</button></div>`).join("")+
     '<p class="msg" id="rg_sum"></p><button onclick="saveRegister()">Save attendance</button>';
   sumRegister();
 }
@@ -393,30 +416,36 @@ async function saveRecords(recs,date,m){
   if(skipped) t+=` ${skipped} already had a record for that date.`;
   if(errs.length) t+=` ${errs.length} failed (e.g. ${errs.slice(0,3).map(e=>e.adm+": "+e.err).join("; ")}).`;
   say(m,t,!errs.length&&!skipped);
+  loadStatus();
   return {saved,skipped,errs};
 }
-async function uploadAtt(){
-  const f=$("rg_file").files[0], m=$("rg_msg2"), date=$("rg_date").value;
-  if(!f){ say(m,"Choose a file."); return; }
+async function saveWhole(){
+  const m=$("rg_msg2"), date=$("rg_date").value;
   if(!date){ say(m,"Choose a date."); return; }
-  const lines=(await f.text()).split(/\r?\n/).map(l=>l.trim()).filter(Boolean);
-  const map=new Map(); let bad=0;
-  lines.forEach((l,i)=>{
-    const [a,s]=l.split(/[,;\t]/).map(x=>x.trim().replace(/^"|"$/g,""));
-    if(!a||(i===0&&/adm|number|^id$/i.test(a))) return;
-    const st=normStatus(s)||(s===undefined?"Absent":null);
-    if(!st){ bad++; return; }
-    map.set(a,st);
-  });
-  if($("rg_rest").checked){
-    if(!students.length){ say(m,"Student list hasn't loaded yet. Try again."); return; }
-    students.forEach(s=>{ if(!map.has(s.admission_no)) map.set(s.admission_no,"Present"); });
+  if(!students.length){ say(m,"Student list hasn't loaded yet. Try again."); return; }
+  const known=new Set(students.map(s=>String(s.admission_no))), map=new Map(); let bad=0;
+  const toks=id=>$(id).value.split(/[\s,;]+/).filter(Boolean);
+  toks("rg_late").forEach(a=>map.set(a,"Late"));
+  toks("rg_abs").forEach(a=>map.set(a,"Absent"));
+  const f=$("rg_file").files[0];
+  if(f){
+    (await f.text()).split(/\r?\n/).map(l=>l.trim()).filter(Boolean).forEach((l,i)=>{
+      const [a,s]=l.split(/[,;\t]/).map(x=>x.trim().replace(/^"|"$/g,""));
+      if(!a||(i===0&&/adm|number|^id$/i.test(a))) return;
+      const st=normStatus(s)||(s===undefined?"Absent":null);
+      if(!st){ bad++; return; } map.set(a,st); });
   }
+  const unknown=[...map.keys()].filter(a=>!known.has(a)); unknown.forEach(a=>map.delete(a));
+  if($("rg_rest").checked) students.forEach(s=>{ const a=String(s.admission_no); if(!map.has(a)) map.set(a,"Present"); });
   const recs=[...map].map(([adm,status])=>({adm,status}));
-  if(!recs.length){ say(m,"No valid rows found."); return; }
-  if(!confirm(`Save ${recs.length} attendance records for ${date}?`)) return;
+  if(!recs.length){ say(m,"Nothing to save."); return; }
+  const c=x=>recs.filter(r=>r.status===x).length;
+  let msg=`Save for ${date}?\n\nPresent: ${c("Present")}\nAbsent: ${c("Absent")}\nLate: ${c("Late")}`;
+  if(unknown.length) msg+=`\n\nNot found and ignored (${unknown.length}): ${unknown.slice(0,8).join(", ")}${unknown.length>8?"...":""}`;
+  if(bad) msg+=`\n${bad} unreadable file rows ignored.`;
+  if(!confirm(msg)) return;
   const r=await saveRecords(recs,date,m);
-  if(r&&bad) m.textContent+=` ${bad} unreadable rows were ignored.`;
+  if(r&&!r.errs.length){ $("rg_abs").value=""; $("rg_late").value=""; $("rg_file").value=""; }
 }
 
 /* ---------- Weekly report (PDF) ---------- */
@@ -559,7 +588,7 @@ async function signOut(){ await db.auth.signOut(); show(false); }
 function show(on){
   $("login").classList.toggle("hidden",on);
   $("app").classList.toggle("hidden",!on);
-  if(on){ build(); load(); loadTT(); loadStudents(); loadTeachers(); loadAsg(); } else $("pw").value="";
+  if(on){ build(); load(); loadTT(); loadStudents(); loadTeachers(); loadAsg(); loadStatus(); } else $("pw").value="";
 }
 show(false);
 </script>
